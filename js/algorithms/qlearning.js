@@ -17,7 +17,7 @@
               <button id="ql-clear-grid">clear grid</button>
             </div>
           </div>
-          <svg id="ql-svg" width="${GW * CELL}" height="${GH * CELL}" style="align-self:center"></svg>
+          <div class="hscroll" style="align-self:center;max-width:100%"><svg id="ql-svg" width="${GW * CELL}" height="${GH * CELL}"></svg></div>
           <div class="stage-hint">paint mode below, then click cells · S = start (fixed top-left) · shading = max Q-value · arrows = greedy action</div>
         </div>
         <div class="controls">

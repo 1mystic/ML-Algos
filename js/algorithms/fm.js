@@ -47,7 +47,7 @@
           </div>
           <div style="padding:8px 4px">
             <div class="stage-hint" style="margin-bottom:6px">user × item rating matrix (bold = observed, faded = FM prediction)</div>
-            <table id="fm-table" style="border-collapse:collapse;font-size:12px"></table>
+            <div class="hscroll"><table id="fm-table" style="border-collapse:collapse;font-size:12px"></table></div>
           </div>
           <div style="padding:8px 4px;flex:1">
             <div class="stage-hint" style="margin-bottom:6px">learned latent space (each user/item is a 2D vector v — dot products of nearby vectors drive high predicted ratings)</div>

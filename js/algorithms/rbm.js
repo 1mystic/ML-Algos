@@ -37,7 +37,7 @@
               <button id="rbm-clear">clear canvas</button>
             </div>
           </div>
-          <div style="display:flex;gap:26px;flex-wrap:wrap;justify-content:center;padding:14px 4px;flex:1;align-items:center">
+          <div class="hscroll" style="display:flex;gap:26px;flex-wrap:wrap;justify-content:center;padding:14px 4px;flex:1;align-items:center">
             <div style="text-align:center">
               <div class="stage-hint" style="margin-bottom:6px">visible units (draw here)</div>
               <svg id="rbm-v" width="${VN * CELL}" height="${VN * CELL}"></svg>

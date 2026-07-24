@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ML Algorithms — Interactive Lab</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="glyph">λ</span> ml-algorithms&nbsp;<span style="color:var(--text-faint);font-weight:400;">/ lab</span></div>
+  <div class="topbar-links">
+    <a href="https://github.com/rushter/MLAlgorithms" target="_blank" rel="noopener">source repo</a>
+    <a href="#/">home</a>
+  </div>
+</div>
+<div class="banner">
+  <span class="badge">note</span>
+  <span>Every algorithm here is reimplemented in plain JavaScript for the browser — the cloned <code>MLAlgorithms/</code> folder next to this page holds the original numpy code each demo is based on.</span>
+</div>
+
+<div class="layout">
+  <div class="sidebar" id="sidebar-nav"></div>
+  <div class="main" id="main"></div>
+</div>
+
+<!-- CDN libraries: D3 drives every rendering/interaction surface below (scales, drag,
+     contours, transitions); TensorFlow.js powers the trained-in-browser MLP demo. -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4/dist/tf.min.js"></script>
+
+<script src="js/utils.js"></script>
+<script src="js/app.js"></script>
+
+<script src="js/algorithms/linear_regression.js"></script>
+<script src="js/algorithms/logistic_regression.js"></script>
+<script src="js/algorithms/knn.js"></script>
+<script src="js/algorithms/naive_bayes.js"></script>
+<script src="js/algorithms/kmeans.js"></script>
+<script src="js/algorithms/gmm.js"></script>
+<script src="js/algorithms/pca.js"></script>
+<script src="js/algorithms/tsne.js"></script>
+<script src="js/algorithms/decision_tree.js"></script>
+<script src="js/algorithms/gbm.js"></script>
+<script src="js/algorithms/svm.js"></script>
+<script src="js/algorithms/neuralnet.js"></script>
+<script src="js/algorithms/cnn.js"></script>
+<script src="js/algorithms/rnn_lstm.js"></script>
+<script src="js/algorithms/rbm.js"></script>
+<script src="js/algorithms/fm.js"></script>
+<script src="js/algorithms/qlearning.js"></script>
+
+<script>MLApp.init();</script>
+</body>
+</html>

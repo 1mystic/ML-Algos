@@ -59,7 +59,7 @@
           </div>
           <div style="padding:10px 4px">
             <div class="stage-hint" style="margin-bottom:6px">input sequence — click a step to toggle 0 / 1</div>
-            <div id="rnn-seq" style="display:flex;gap:4px;margin-bottom:16px"></div>
+            <div id="rnn-seq" class="hscroll" style="display:flex;gap:4px;margin-bottom:16px"></div>
             <div id="rnn-gates" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px"></div>
             <div class="stage-hint" style="margin:16px 0 6px">hidden state h over time (unit 0)</div>
             <svg id="rnn-trace" width="100%" height="80" viewBox="0 0 600 80" preserveAspectRatio="none"></svg>

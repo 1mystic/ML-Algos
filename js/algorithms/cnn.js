@@ -63,7 +63,7 @@
               <button id="cnn-clear">clear</button>
             </div>
           </div>
-          <div style="display:flex;gap:22px;flex-wrap:wrap;justify-content:center;padding:10px 0;flex:1;align-items:flex-start">
+          <div class="hscroll" style="display:flex;gap:22px;flex-wrap:wrap;justify-content:center;padding:10px 0;flex:1;align-items:flex-start">
             <div style="text-align:center">
               <div class="stage-hint" style="margin-bottom:6px">input (${GRID}×${GRID})</div>
               <svg id="cnn-input" width="${GRID * CELL}" height="${GRID * CELL}"></svg>

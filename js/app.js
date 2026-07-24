@@ -156,9 +156,11 @@ const MLApp = (() => {
   }
 
   function updateThemeToggleUI(theme) {
-    const icon = document.getElementById("theme-toggle-icon");
+    const moon = document.getElementById("theme-icon-moon");
+    const sun = document.getElementById("theme-icon-sun");
     const label = document.getElementById("theme-toggle-label");
-    if (icon) icon.textContent = theme === "dark" ? "🌙" : "☀️";
+    if (moon) moon.style.display = theme === "dark" ? "" : "none";
+    if (sun) sun.style.display = theme === "dark" ? "none" : "";
     if (label) label.textContent = theme;
   }
 

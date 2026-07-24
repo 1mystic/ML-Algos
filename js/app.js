@@ -142,12 +142,49 @@ const MLApp = (() => {
   }
 
   function router() {
+    const sidebar = document.getElementById("sidebar-nav");
+    if (sidebar) sidebar.classList.remove("open"); // collapse the mobile drawer on navigation
     const hash = location.hash.replace(/^#\/?/, "");
     if (!hash) renderHome();
     else renderAlgo(hash);
   }
 
+  function currentTheme() {
+    const stored = localStorage.getItem("ml-theme");
+    if (stored) return stored;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+
+  function updateThemeToggleUI(theme) {
+    const icon = document.getElementById("theme-toggle-icon");
+    const label = document.getElementById("theme-toggle-label");
+    if (icon) icon.textContent = theme === "dark" ? "🌙" : "☀️";
+    if (label) label.textContent = theme;
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("ml-theme", theme);
+    updateThemeToggleUI(theme);
+  }
+
+  function initTheme() {
+    updateThemeToggleUI(currentTheme());
+    const stored = localStorage.getItem("ml-theme");
+    if (stored) document.documentElement.setAttribute("data-theme", stored);
+    const btn = document.getElementById("theme-toggle");
+    if (btn) btn.addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark"));
+  }
+
+  function initMobileNav() {
+    const btn = document.getElementById("menu-toggle");
+    const sidebar = document.getElementById("sidebar-nav");
+    if (btn && sidebar) btn.addEventListener("click", () => sidebar.classList.toggle("open"));
+  }
+
   function init() {
+    initTheme();
+    initMobileNav();
     window.addEventListener("hashchange", router);
     router();
   }

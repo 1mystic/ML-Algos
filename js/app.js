@@ -49,13 +49,15 @@ const MLApp = (() => {
 
   function byId(id) { return registry.find((a) => a.id === id); }
 
-  // Sidebar groups start collapsed so the rail stays readable; the group
-  // holding the current algorithm is always forced open, and any group the
-  // user opens by hand is remembered across navigations.
+  // Sidebar groups start collapsed so the rail stays readable. Navigating to an
+  // algorithm auto-opens its group, but that is only a default: the user can
+  // collapse it again like any other, and every choice is remembered.
   const openGroups = (() => {
     try { return new Set(JSON.parse(localStorage.getItem("ml-open-groups") || "[]")); }
     catch (e) { return new Set(); }
   })();
+  // Categories the user explicitly collapsed, so auto-open does not undo them.
+  const closedGroups = new Set();
 
   function persistOpenGroups() {
     try { localStorage.setItem("ml-open-groups", JSON.stringify([...openGroups])); } catch (e) {}
@@ -71,7 +73,7 @@ const MLApp = (() => {
       const items = registry.filter((a) => a.category === cat);
       if (!items.length) continue;
       const meta = CATEGORY_META[cat] || { color: "var(--text)", icon: "" };
-      const isOpen = openGroups.has(cat) || cat === activeCat;
+      const isOpen = openGroups.has(cat) || (cat === activeCat && !closedGroups.has(cat));
 
       const group = document.createElement("div");
       group.className = "sidebar-group" + (isOpen ? " open" : "");
@@ -87,7 +89,8 @@ const MLApp = (() => {
         <span class="sg-count">${items.length}</span>
         <span class="sg-chevron" aria-hidden="true">›</span>`;
       title.onclick = () => {
-        if (openGroups.has(cat)) openGroups.delete(cat); else openGroups.add(cat);
+        if (isOpen) { openGroups.delete(cat); closedGroups.add(cat); }
+        else { openGroups.add(cat); closedGroups.delete(cat); }
         persistOpenGroups();
         renderSidebar();
       };
@@ -375,6 +378,114 @@ const MLApp = (() => {
     if (btn) btn.addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark"));
   }
 
+  // ---- header search --------------------------------------------------------
+  // Matches name, tagline, category and description; results are grouped-free
+  // and keyboard navigable so the box works without touching the mouse.
+  function searchRegistry(query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const scored = [];
+    for (const a of registry) {
+      const name = a.name.toLowerCase();
+      const hay = `${name} ${a.tagline} ${a.category} ${a.description}`.toLowerCase();
+      if (!hay.includes(q)) continue;
+      // Rank exact prefix matches on the name above incidental body matches.
+      const score = name.startsWith(q) ? 0 : name.includes(q) ? 1 : 2;
+      scored.push({ algo: a, score });
+    }
+    return scored.sort((x, y) => x.score - y.score || x.algo.name.localeCompare(y.algo.name))
+                 .slice(0, 8)
+                 .map((s) => s.algo);
+  }
+
+  function highlight(text, query) {
+    const q = query.trim();
+    if (!q) return text;
+    const i = text.toLowerCase().indexOf(q.toLowerCase());
+    if (i === -1) return text;
+    return `${text.slice(0, i)}<mark>${text.slice(i, i + q.length)}</mark>${text.slice(i + q.length)}`;
+  }
+
+  function initSearch() {
+    const box = document.getElementById("search");
+    const input = document.getElementById("search-input");
+    const panel = document.getElementById("search-results");
+    if (!box || !input || !panel) return;
+
+    let matches = [];
+    let cursor = -1;
+
+    function close() {
+      panel.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      cursor = -1;
+    }
+
+    function go(algo) {
+      if (!algo) return;
+      location.hash = "#/" + algo.id;
+      input.value = "";
+      close();
+      input.blur();
+    }
+
+    function paint() {
+      [...panel.children].forEach((el, i) => el.classList.toggle("active", i === cursor));
+      if (cursor >= 0 && panel.children[cursor]) {
+        panel.children[cursor].scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function render() {
+      const q = input.value;
+      matches = searchRegistry(q);
+      cursor = -1;
+      if (!q.trim()) { close(); return; }
+
+      if (!matches.length) {
+        panel.innerHTML = `<div class="search-empty">No algorithm matches “${q}”</div>`;
+      } else {
+        panel.innerHTML = matches.map((a) => {
+          const meta = CATEGORY_META[a.category] || { color: "var(--text)", icon: "" };
+          return `<div class="search-item" role="option" style="--cat-color:${meta.color}">
+            <span class="search-item-icon">${meta.icon}</span>
+            <span class="search-item-text">
+              <span class="search-item-name">${highlight(a.name, q)}</span>
+              <span class="search-item-meta">${a.category} · ${a.tagline}</span>
+            </span>
+          </div>`;
+        }).join("");
+        [...panel.children].forEach((el, i) => {
+          el.onmousedown = (e) => { e.preventDefault(); go(matches[i]); };
+          el.onmouseenter = () => { cursor = i; paint(); };
+        });
+      }
+      panel.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+    }
+
+    input.addEventListener("input", render);
+    input.addEventListener("focus", () => { if (input.value.trim()) render(); });
+    input.addEventListener("blur", () => setTimeout(close, 120));
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { input.value = ""; close(); input.blur(); return; }
+      if (panel.hidden || !matches.length) return;
+      if (e.key === "ArrowDown") { e.preventDefault(); cursor = (cursor + 1) % matches.length; paint(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); cursor = (cursor - 1 + matches.length) % matches.length; paint(); }
+      else if (e.key === "Enter") { e.preventDefault(); go(matches[cursor >= 0 ? cursor : 0]); }
+    });
+
+    // "/" focuses the box from anywhere, as long as you are not already typing.
+    document.addEventListener("keydown", (e) => {
+      const tag = (e.target.tagName || "").toLowerCase();
+      if (e.key === "/" && tag !== "input" && tag !== "textarea" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        input.focus();
+      }
+    });
+  }
+
   function initMobileNav() {
     const btn = document.getElementById("menu-toggle");
     const sidebar = document.getElementById("sidebar-nav");
@@ -383,6 +494,7 @@ const MLApp = (() => {
 
   function init() {
     initTheme();
+    initSearch();
     initMobileNav();
     window.addEventListener("hashchange", router);
     router();

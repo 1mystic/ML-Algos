@@ -42,7 +42,7 @@
   }
 }
 
-/* Manual toggle overrides — win over the OS preference either direction */
+/* Manual toggle overrides: win over the OS preference either direction */
 :root[data-theme="dark"] {
   --bg: #141414;
   --bg-raised: #1b1b1b;
@@ -117,7 +117,15 @@ a { color: inherit; }
   font-weight: 700;
   letter-spacing: 0.5px;
   font-size: 15px;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 6px;
+  padding: 2px 4px;
+  margin: -2px -4px;
 }
+
+.brand:hover { background: var(--bg-inset); }
+.brand:focus-visible { outline: 2px solid var(--pastel-green); outline-offset: 2px; }
 
 .brand .glyph {
   display: inline-block;
@@ -137,14 +145,114 @@ a { color: inherit; }
   gap: 18px;
 }
 
-.topbar-links {
+/* ---------- header search ---------- */
+.search {
+  position: relative;
   display: flex;
-  gap: 22px;
-  color: var(--text-dim);
-  font-size: 13.5px;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 9px;
+  width: 250px;
+  transition: border-color 0.12s ease;
 }
 
-.topbar-links a:hover { color: var(--text); }
+.search:focus-within {
+  border-color: var(--pastel-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pastel-green) 20%, transparent);
+}
+
+.search-icon { flex-shrink: 0; color: var(--text-faint); }
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 7px 0;
+}
+
+.search input:focus { outline: none; }
+.search input::placeholder { color: var(--text-faint); }
+
+.search-kbd {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 5px;
+  background: var(--bg);
+}
+
+.search:focus-within .search-kbd { display: none; }
+
+.search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(400px, 88vw);
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  z-index: 40;
+  padding: 5px;
+}
+
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.search-item.active { background: color-mix(in srgb, var(--cat-color, var(--text)) 13%, transparent); }
+
+.search-item-icon {
+  flex-shrink: 0;
+  display: flex;
+  color: var(--cat-color, var(--text-faint));
+}
+
+.search-item-icon svg { width: 16px; height: 16px; }
+
+.search-item-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.search-item-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+
+.search-item-name mark {
+  background: color-mix(in srgb, var(--pastel-green) 35%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.search-item-meta {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-empty {
+  padding: 14px 12px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
 
 .theme-toggle {
   display: flex;
@@ -1008,11 +1116,36 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   max-width: 100%;
 }
 
-/* ---------- mobile / responsive ---------- */
+/* ---------- responsive ---------- */
+
+/* Large desktop: let the reading column breathe without going full-bleed. */
+@media (min-width: 1600px) {
+  .main { padding: 32px 48px 72px; }
+  .ref-section { max-width: 1280px; }
+}
+
+/* Narrow desktop / large tablet: the sidebar is the first thing to give. */
+@media (max-width: 1100px) {
+  .sidebar { width: 215px; }
+  .search { width: 200px; }
+  .home-categories { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+}
+
+@media (max-width: 900px) {
+  .search { width: 165px; }
+  .search-kbd { display: none; }
+  .home-categories { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 780px) {
   .topbar { flex-wrap: wrap; gap: 10px; padding: 12px 14px; }
   .banner { padding: 8px 14px; font-size: 12px; }
   .menu-toggle { display: inline-block; }
+
+  /* Search drops to its own full-width row under the brand. */
+  .topbar-right { width: 100%; order: 3; gap: 10px; }
+  .search { width: 100%; flex: 1; }
+  .search-results { right: auto; left: 0; width: 100%; }
 
   .layout { flex-direction: column; }
 
@@ -1031,11 +1164,138 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   }
 
   .main { padding: 18px 16px 40px; }
-  .main-header h1 { font-size: 19px; }
+  .main-header h1 { font-size: 21px; }
   .panel { grid-template-columns: 1fr; }
   .tabs { gap: 16px; }
   .home-categories { grid-template-columns: 1fr; gap: 14px; }
   .stage { padding: 10px; min-height: 320px; }
   .info-grid { grid-template-columns: 1fr; }
   .info-block.span2 { grid-column: span 1; }
+
+  /* Reference sections: stack the two-column pieces and keep tables scrollable. */
+  .ref-h2 { font-size: 16px; }
+  .pro-con { grid-template-columns: 1fr; }
+  .ref-table { font-size: 12.5px; }
+  .ref-table th, .ref-table td { padding: 8px 10px; }
+  .ref-table td:first-child { min-width: 90px; }
+  .flow { padding-bottom: 8px; }
+  .code-block { font-size: 12px; padding: 12px; }
+}
+
+@media (max-width: 480px) {
+  html, body { font-size: 15.5px; }
+  .topbar { padding: 10px 12px; }
+  .brand { font-size: 13.5px; }
+  .main { padding: 16px 12px 36px; }
+  .main-header h1 { font-size: 19px; }
+  .ref-section { margin-bottom: 26px; }
+  .math-step, .why-item, .info-block { padding: 11px 12px; }
+  .algo-row, .category-header { padding-left: 13px; padding-right: 13px; }
+  .flow-node { max-width: 150px; }
+}
+
+/* ---------- print: A4, single readable column ---------- */
+@media print {
+  /* Force the light palette; dark backgrounds waste ink and print grey. */
+  :root,
+  :root[data-theme="dark"],
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --bg-raised: #ffffff;
+    --bg-inset: #f6f6f5;
+    --border: #bbbbb8;
+    --border-soft: #dddddb;
+    --text: #000000;
+    --text-dim: #2a2a28;
+    --text-faint: #55554f;
+    --accent: #000000;
+    --pastel-red: #a32f2f;
+    --pastel-red-soft: #f7e6e6;
+    --pastel-green: #1f6b42;
+    --pastel-green-soft: #e4f3ea;
+  }
+
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+
+  html, body {
+    background: #fff;
+    font-size: 10.5pt;
+    height: auto;
+  }
+
+  /* Chrome-only elements have no place on paper. */
+  .topbar, .sidebar, .menu-toggle, .theme-toggle, .search,
+  .tabs, .banner, .stage-toolbar, .controls, .btn-row, button {
+    display: none !important;
+  }
+
+  .layout { display: block; }
+
+  .main {
+    overflow: visible;
+    padding: 0;
+    display: block;
+  }
+
+  /* Print the reference tab even when the playground is the visible one. */
+  #tab-ref { display: block !important; }
+  #tab-play { display: none !important; }
+
+  .main-header {
+    border-bottom: 1.5pt solid #000;
+    margin-bottom: 12pt;
+    padding-bottom: 8pt;
+  }
+
+  .main-header h1 { font-size: 20pt; }
+  .main-header p { font-size: 10.5pt; max-width: none; }
+
+  /* Keep a section's heading attached to its content across a page break. */
+  .ref-section {
+    break-inside: auto;
+    margin-bottom: 14pt;
+    max-width: none;
+  }
+
+  .ref-h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+    font-size: 13pt;
+    margin-bottom: 8pt;
+  }
+
+  .info-block, .math-step, .why-item, .flow-wrap, .worked-example {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    background: #fff;
+    border: 0.5pt solid var(--border);
+  }
+
+  .ref-table { break-inside: auto; font-size: 9.5pt; }
+  .ref-table tr { break-inside: avoid; page-break-inside: avoid; }
+  .ref-table thead { display: table-header-group; }  /* repeat header per page */
+  .ref-table tbody tr:nth-child(even) { background: #f6f6f5; }
+
+  /* Nothing can scroll on paper, so let wide content wrap instead. */
+  .hscroll, .flow, .code-block, .info-block, .plot-slot { overflow: visible !important; }
+  .flow { flex-wrap: wrap; gap: 6pt; }
+  .flow-node { max-width: none; }
+
+  .code-block {
+    font-size: 8.5pt;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: 0.5pt solid var(--border);
+    break-inside: avoid;
+  }
+  .code-block code { white-space: pre-wrap; }
+
+  .inline-formula, .formula { white-space: normal; word-break: break-word; }
+
+  .pro-con { grid-template-columns: 1fr 1fr; gap: 8pt; }
+  .info-grid { gap: 8pt; }
+
+  svg, canvas { max-width: 100% !important; height: auto !important; }
+
+  a { text-decoration: none; color: inherit; }
 }

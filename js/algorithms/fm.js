@@ -170,6 +170,37 @@
       type: "Supervised - Regression/ranking. Factorized second-order feature-interaction model.",
       scenario: "Sparse, high-cardinality categorical data (user IDs × item IDs, ad click prediction with many categorical fields) where you want pairwise feature interactions without an explosion of parameters - a generalization of matrix factorization.",
       inputs: "A (typically sparse, one-hot-encoded) feature vector x - here a user indicator and an item indicator - and a target rating.",
+      intuition: {
+        definition: "A linear model cannot express 'this user likes this genre'. Adding a weight per feature pair would need O(n²) parameters, almost all of which are never observed. Factorization machines instead give every feature a small <b>latent vector</b>, and define the interaction weight for any pair as the dot product of their vectors.",
+        steps: [
+          "Start from a linear model with a global bias and per-feature weights.",
+          "Add pairwise interaction terms.",
+          "Factorize each pair's weight as ⟨vᵢ, vⱼ⟩ instead of learning it directly.",
+          "Now every observation of feature i improves its vector for all pairings.",
+        ],
+        applications: [
+          "Recommender systems with user and item identifiers",
+          "Click-through-rate prediction across many categorical ad fields",
+          "Cold-start ranking using side features such as age or category",
+          "Any sparse categorical problem where interactions matter",
+          "A generalization that subsumes matrix factorization, SVD++, and more",
+        ],
+      },
+      math: [
+        { title: "Model equation", formula: "ŷ(x) = w₀ + Σᵢ wᵢxᵢ + Σ_{i<j} ⟨vᵢ, vⱼ⟩·xᵢxⱼ", note: "The first two terms are ordinary linear regression. The third adds every pairwise interaction, but with factorized rather than free weights." },
+        { title: "Factorized interaction", formula: "ŵᵢⱼ = ⟨vᵢ, vⱼ⟩ = Σ_{f=1}^{k} vᵢ,f · vⱼ,f", note: "Parameters drop from O(n²) to O(nk). More importantly, the weights become dependent, so information shares across pairs." },
+        { title: "Linear-time computation", formula: "Σ_{i<j}⟨vᵢ,vⱼ⟩xᵢxⱼ = ½ Σ_f [ (Σᵢ vᵢ,f xᵢ)² − Σᵢ vᵢ,f² xᵢ² ]", note: "The key identity. It turns a naive O(n²k) sum into O(nk), and with sparse x only the non-zero entries contribute. This is what makes FMs practical." },
+        { title: "Gradients", formula: "∂ŷ/∂w₀ = 1,  ∂ŷ/∂wᵢ = xᵢ,  ∂ŷ/∂vᵢ,f = xᵢ·(Σⱼ vⱼ,f xⱼ) − vᵢ,f·xᵢ²", note: "The inner sum is shared across all i, so a full gradient step costs the same order as a prediction." },
+        { title: "Reduction to matrix factorization", formula: "with only user and item one-hots: ŷ = w₀ + w_u + w_i + ⟨v_u, v_i⟩", note: "Exactly biased matrix factorization. FMs are strictly more general, because you can append any other feature to the same vector." },
+        { title: "Higher-order FMs", formula: "add Σ_{i<j<l} ⟨vᵢ,vⱼ,v_l⟩ terms", note: "Degree-3 and above are possible but rarely worth the cost. Second order captures most of the useful signal." },
+      ],
+      pipeline: [
+        { label: "Sparse x", note: "one-hot fields" },
+        { label: "Linear part", note: "w₀ + Σwᵢxᵢ" },
+        { label: "Latent vectors", note: "vᵢ per feature" },
+        { label: "Pairwise ⟨vᵢ,vⱼ⟩", note: "O(nk) trick" },
+        { label: "Prediction ŷ", note: "score or rating", accent: "green" },
+      ],
       decisionFunction: {
         text: "ŷ(x) = w₀ + Σᵢ wᵢxᵢ + Σ_{i<j} ⟨vᵢ,vⱼ⟩xᵢxⱼ",
         mechanism: "Instead of a separate weight per feature pair (O(n²) parameters, most never observed), each feature gets a small latent vector v; the interaction weight for any pair is just the dot product of their vectors - so interactions generalize even to feature pairs never co-observed in training.",
@@ -178,7 +209,124 @@
         text: "L = Σᵢ (yᵢ − ŷᵢ)² + regularization on w and v",
         mechanism: "Minimized by stochastic gradient descent. For the one-hot user/item case here it reduces to exactly the classic biased matrix-factorization update, adjusting w₀, the user/item biases, and the latent vectors after each observed rating.",
       },
+      optimization: [
+        { title: "SGD", formula: "θ := θ − η(∂L/∂θ + λθ)", note: "The usual choice. Cheap per step, handles streaming data, and works naturally with sparse updates that touch only the active features." },
+        { title: "ALS / coordinate descent", formula: "solve one parameter at a time in closed form", note: "No learning rate to tune, and it converges reliably. Requires the full dataset in memory." },
+        { title: "MCMC / Bayesian FM", formula: "sample parameters, integrate out regularization", note: "Removes hyperparameter tuning almost entirely by placing priors on the regularization terms. Often the best out-of-the-box accuracy." },
+        { title: "Sparse update cost", formula: "O(k · nnz(x)) per example", note: "Only non-zero features are touched. With one-hot fields that is a handful of vectors per row regardless of vocabulary size." },
+        { title: "Initialisation", formula: "v ~ N(0, σ²) with small σ, w = 0", note: "Latent vectors must be random. Initialising them to zero makes every dot product zero and every gradient zero, so they never move." },
+      ],
       output: "A predicted continuous rating/score for any (user, item) pair - including pairs never observed during training.",
+      assumptions: [
+        { name: "Interactions are low-rank", why: "The whole method assumes the pairwise weight matrix can be approximated by a rank-k factorization.", check: "If accuracy plateaus well below a full interaction model, the structure may not be low-rank." },
+        { name: "Data is sparse and categorical", why: "FMs shine when most pairs are unobserved. On dense numeric data a tree ensemble usually wins.", check: "Count the non-zero fraction. Very dense data is the wrong regime." },
+        { name: "Second-order suffices", why: "Standard FMs model only pairwise interactions.", check: "If three-way effects matter, use higher-order FMs, DeepFM, or gradient boosting." },
+        { name: "Features are properly encoded", why: "Interactions are between encoded columns, so a badly encoded categorical destroys the structure.", check: "One-hot encode categoricals; do not label-encode them into a single numeric column." },
+        { name: "Enough observations per feature", why: "A latent vector needs data to be estimated.", check: "Features appearing once or twice need strong regularization or should be bucketed." },
+      ],
+      regularization: [
+        { name: "L2 on weights", formula: "+ λ_w Σ wᵢ²", note: "Standard shrinkage on the linear part." },
+        { name: "L2 on latent vectors", formula: "+ λ_v Σ ‖vᵢ‖²", note: "Critical on sparse data. Rare features would otherwise get large, unreliable vectors fitted to a handful of rows." },
+        { name: "Per-group regularization", formula: "separate λ per feature field", note: "User IDs, item IDs, and side features have very different observation counts and deserve different shrinkage." },
+        { name: "Latent dimension k", formula: "k controls rank", note: "k is itself a capacity control. Small k is a strong structural regularizer." },
+        { name: "Early stopping", formula: "halt on validation RMSE", note: "SGD on sparse data overfits rare features quickly." },
+        { name: "Bayesian priors", formula: "place hyperpriors on λ", note: "Lets the model infer regularization strength instead of requiring a grid search." },
+      ],
+      hyperparameters: [
+        { name: "latent dimension k", range: "2 - 200", increasing: "Richer interaction structure, more parameters, more overfitting on sparse data.", strategy: "Start at 8 to 16. Rating prediction rarely needs more than 50. Larger k demands stronger L2." },
+        { name: "learning rate η", range: "1e-4 - 0.1", increasing: "Faster convergence, then divergence.", strategy: "0.01 is a reasonable start with SGD. Use a decay schedule or switch to Adagrad, which suits sparse features well." },
+        { name: "λ_v (latent L2)", range: "1e-5 - 1", increasing: "Vectors shrink toward zero, interactions weaken toward a purely linear model.", strategy: "The most important regularization knob. Log-scale search; rare features need more." },
+        { name: "λ_w (linear L2)", range: "1e-5 - 1", increasing: "Bias terms shrink.", strategy: "Usually smaller than λ_v, since biases are estimated from more data." },
+        { name: "epochs", range: "10 - 200", increasing: "Better fit, then overfitting of rare features.", strategy: "Early-stop on a validation split." },
+        { name: "init stdev", range: "0.001 - 0.1", increasing: "Larger initial interactions, faster early movement, less stability.", strategy: "0.01 is standard. Must be non-zero." },
+        { name: "optimizer", range: "SGD / ALS / MCMC", increasing: "Not applicable", strategy: "SGD for large or streaming data, ALS for reliability, MCMC when you want to skip tuning." },
+      ],
+      metrics: ["RMSE / MAE (rating prediction)", "AUC / log-loss (binary click-through variants)", "Precision@k / NDCG (ranking/recommendation)", "Coverage and cold-start performance"],
+      typicalUses: ["Recommender systems", "Click-through-rate prediction in ad systems", "Tabular problems with many sparse categorical features and meaningful interactions"],
+      diagnostics: [
+        "Compare against a linear model with no interaction term. If FM does not beat it, the interactions are not carrying signal or λ_v is too high.",
+        "Sweep k and watch validation error. A curve that keeps improving means you are under-parameterised; one that worsens means overfitting.",
+        "Plot the latent vectors when k is 2 or after PCA. Similar users or items should cluster together.",
+        "Check performance separately on rare versus frequent features. Rare-feature degradation points to insufficient regularization.",
+        "Evaluate cold-start cases explicitly, since generalising to unseen pairs is the main reason to choose an FM.",
+      ],
+      advantages: [
+        "Models pairwise interactions with O(nk) parameters instead of O(n²).",
+        "Generalises to feature pairs never seen together in training, which plain interaction weights cannot do.",
+        "Prediction and training are linear time thanks to the reformulation identity.",
+        "Works directly on very sparse one-hot data where most models struggle.",
+        "Strictly generalises matrix factorization, so side features slot in without changing the model.",
+        "Handles cold start far better than pure collaborative filtering.",
+      ],
+      limitations: [
+        { name: "Only second-order interactions", note: "three-way effects are not captured", fix: "higher-order FMs, DeepFM, or gradient boosting." },
+        { name: "Shared latent space across all pairings", note: "one vector per feature must serve every interaction it participates in", fix: "field-aware FMs, which give each feature a separate vector per interacting field." },
+        { name: "Assumes low-rank structure", note: "genuinely idiosyncratic interactions are not representable", fix: "add explicit crosses, or use a tree model." },
+        { name: "Sensitive to regularization", note: "sparse features overfit readily", fix: "per-field λ, or a Bayesian FM." },
+        { name: "Weaker on dense numeric data", note: "boosting typically wins outside the sparse categorical regime", fix: "benchmark both." },
+        { name: "Latent vectors are not interpretable", note: "dimensions have no inherent meaning", fix: "inspect nearest neighbours in latent space instead." },
+      ],
+      alternatives: [
+        { name: "Field-aware FM (FFM)", when: "Click-through prediction with many distinct fields. More parameters, usually more accurate." },
+        { name: "DeepFM / xDeepFM", when: "You want FM's low-order interactions plus a neural network's higher-order ones." },
+        { name: "Gradient boosting", when: "Dense tabular features, or interactions that are not low-rank." },
+        { name: "Matrix factorization", when: "Only user and item identifiers, no side features. Simpler and equivalent in that case." },
+        { name: "Two-tower neural retrieval", when: "Large-scale recommendation with rich content features." },
+      ],
+      pitfalls: [
+        { problem: "Latent vectors never move from zero", solution: "They were initialised to zero, so every dot product and gradient is zero. Initialise randomly." },
+        { problem: "Severe overfitting on rare features", solution: "Raise λ_v, lower k, or bucket rare categories into an 'other' bin." },
+        { problem: "No improvement over linear regression", solution: "Either interactions carry no signal, or λ_v has shrunk them away. Try a lower λ_v and larger k first." },
+        { problem: "Training is unexpectedly slow", solution: "You may be computing interactions naively. Use the O(nk) reformulation." },
+        { problem: "Label-encoding categoricals", solution: "That imposes a false ordering and destroys the interaction structure. One-hot encode instead." },
+        { problem: "Poor cold-start performance", solution: "Add side features such as category or demographics so a new ID still has informative vectors." },
+      ],
+      quickRef: [
+        { name: "Model", formula: "ŷ = w₀ + Σwᵢxᵢ + Σ_{i<j}⟨vᵢ,vⱼ⟩xᵢxⱼ" },
+        { name: "Interaction weight", formula: "ŵᵢⱼ = ⟨vᵢ, vⱼ⟩" },
+        { name: "Linear-time form", formula: "½Σ_f[(Σᵢvᵢ,f xᵢ)² − Σᵢvᵢ,f²xᵢ²]" },
+        { name: "Parameters", formula: "O(nk) instead of O(n²)" },
+        { name: "Prediction cost", formula: "O(k · nnz(x))" },
+        { name: "Latent gradient", formula: "xᵢ(Σⱼvⱼ,f xⱼ) − vᵢ,f xᵢ²" },
+        { name: "MF special case", formula: "w₀ + w_u + w_i + ⟨v_u,v_i⟩" },
+        { name: "Init", formula: "v ~ N(0, σ²), never zero" },
+      ],
+      code: `# pip install fastFM  (or use xlearn / LightFM for larger scale)
+from fastFM import als
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import mean_squared_error
+import scipy.sparse as sp
+
+# One-hot encode every categorical field. Do NOT label-encode:
+# that invents an ordering and destroys the interaction structure.
+enc = OneHotEncoder(handle_unknown="ignore")
+X_tr = enc.fit_transform(df_train[["user_id", "item_id", "genre", "hour"]])
+X_te = enc.transform(df_test[["user_id", "item_id", "genre", "hour"]])
+
+fm = als.FMRegression(
+    n_iter=200,
+    rank=16,          # latent dimension k
+    l2_reg_w=0.1,     # linear terms
+    l2_reg_V=0.5,     # latent vectors: the key regularizer on sparse data
+    init_stdev=0.01,  # must be non-zero or the vectors never move
+)
+fm.fit(X_tr, y_train)
+
+pred = fm.predict(X_te)
+print("RMSE:", mean_squared_error(y_test, pred, squared=False))
+
+# Always compare against a purely linear baseline. If FM does not beat it,
+# the interactions carry no signal or l2_reg_V is too strong.`,
+      whyChain: [
+        { q: "Why not just learn a separate weight for each feature pair?", a: "Two problems. There are O(n²) of them, which is unmanageable when n is millions of one-hot columns. And each weight would be trained only on rows where both features are non-zero, which for sparse data is usually zero rows, so most weights would never be estimated at all." },
+        { q: "How does factorizing fix the second problem?", a: "It makes the weights dependent. Every observation involving feature i updates vᵢ, which changes its dot product with every other feature's vector. So the model can predict an interaction for a pair it has never seen together, by combining what it learned about each one separately." },
+        { q: "Why is the O(nk) reformulation the crucial detail?", a: "Without it, evaluating the pairwise sum costs O(n²k), which defeats the purpose. The identity rewrites the sum of products as the difference between the square of a sum and a sum of squares, both of which are single passes. That is what makes FMs usable at web scale." },
+        { q: "How exactly is this a generalization of matrix factorization?", a: "Give the model only two one-hot fields, user and item. The linear terms become user and item biases, and the single interaction term becomes ⟨v_u, v_i⟩. That is biased matrix factorization exactly. FMs let you append arbitrary extra fields to the same vector, which MF cannot." },
+        { q: "Why must latent vectors be initialised randomly?", a: "The interaction term is a dot product of vectors. If all vectors are zero, every dot product is zero and the gradient with respect to each vector is also zero, so they can never move. Random initialisation breaks that degenerate symmetry." },
+        { q: "What does a field-aware FM add?", a: "In a standard FM each feature has one vector serving every interaction. FFM gives each feature a separate vector per field it interacts with, so a user's vector when pairing with items differs from its vector when pairing with time-of-day. More parameters, but consistently better on click-through data." },
+        { q: "Why do FMs handle cold start better than collaborative filtering?", a: "Pure CF only knows user and item identifiers, so a new user has no history and no prediction. An FM can include side features such as age or category in the same vector, so a new user still has informative components and receives a sensible score immediately." },
+        { q: "When would you use boosting instead?", a: "When features are dense and numeric, or when interactions are idiosyncratic rather than low-rank. FMs assume the interaction matrix factorizes; a tree ensemble makes no such assumption and can carve arbitrary interactions, but needs enough data per region to do it." },
+      ],
       parameters: [
         { name: "latent dimension k", effect: "How much interaction structure can be captured (fixed at 2 here so the latent space is directly plottable)." },
         { name: "learning rate", effect: "SGD step size for updating biases and latent vectors." },

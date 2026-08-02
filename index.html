@@ -12,11 +12,15 @@
 <div class="topbar">
   <div style="display:flex;align-items:center;gap:14px">
     <button class="menu-toggle" id="menu-toggle" aria-label="Toggle algorithm list">☰ algorithms</button>
-    <div class="brand"><span class="glyph">λ</span> ml-algorithms&nbsp;<span style="color:var(--text-faint);font-weight:400;">/ lab</span></div>
+    <a class="brand" href="#/" aria-label="Go to home"><span class="glyph">λ</span> ml-algorithms&nbsp;<span style="color:var(--text-faint);font-weight:400;">/ lab</span></a>
   </div>
   <div class="topbar-right">
-    <div class="topbar-links">
-      <a href="#/">home</a>
+    <div class="search" id="search">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="text" id="search-input" placeholder="search algorithms" autocomplete="off"
+             role="combobox" aria-expanded="false" aria-controls="search-results" aria-label="Search algorithms" />
+      <kbd class="search-kbd" id="search-kbd">/</kbd>
+      <div class="search-results" id="search-results" role="listbox" hidden></div>
     </div>
     <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light/dark theme">
       <svg id="theme-icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>

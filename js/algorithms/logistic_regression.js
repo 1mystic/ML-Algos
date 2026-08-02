@@ -49,7 +49,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="lg-readout">–</div>
-            <div class="note">Batch gradient descent on the log-loss, same objective as <code>mla/linear_models.py</code>'s <code>LogisticRegression</code>. The background shading is P(class 1) = &sigma;(w&middot;x); the solid line is the 0.5 decision boundary.</div>
+            <div class="note">Batch gradient descent on the log-loss. The background shading is P(class 1) = &sigma;(w&middot;x); the solid line is the 0.5 decision boundary.</div>
           </div>
         </div>
       </div>
@@ -137,7 +137,6 @@
     category: "Supervised - Classification",
     tagline: "gradient descent, linear boundary",
     description: "Binary classifier trained with batch gradient descent on the log-loss. Background shading shows the predicted probability surface; the line is the 0.5 decision boundary.",
-    sourceFile: "mla/linear_models.py",
     info: {
       type: "Supervised - Binary classification. Linear discriminative model (a generalized linear model with a logit/sigmoid link).",
       scenario: "Binary outcomes where you want calibrated probabilities and an interpretable, linear decision boundary - e.g. churn, click-through, disease presence, credit default.",

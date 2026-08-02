@@ -28,7 +28,7 @@
           <div class="control-card">
             <h3>variance</h3>
             <div class="readout" id="pca-readout">–</div>
-            <div class="note">Eigendecomposition of the centered covariance matrix (via Jacobi rotation), same objective as <code>mla/pca.py</code>. PC1 is the direction of maximum variance; projecting onto it is the best 1D lossy compression of this data.</div>
+            <div class="note">Eigendecomposition of the centered covariance matrix (via Jacobi rotation). PC1 is the direction of maximum variance; projecting onto it is the best 1D lossy compression of this data.</div>
           </div>
         </div>
       </div>
@@ -132,7 +132,6 @@
     category: "Unsupervised - Dimensionality Reduction",
     tagline: "eigendecomposition of the covariance",
     description: "Finds the orthogonal directions of maximum variance in the data via eigendecomposition of the covariance matrix, and shows what's lost when you project onto just the first component.",
-    sourceFile: "mla/pca.py",
     info: {
       type: "Unsupervised - Dimensionality reduction / linear transformation.",
       scenario: "Compressing correlated features into fewer uncorrelated components, visualizing high-dimensional data, denoising, or as pre-processing before another model.",

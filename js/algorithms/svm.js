@@ -71,7 +71,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="svm-readout">–</div>
-            <div class="note">Kernelized Pegasos solver on the dual soft-margin SVM objective - same Linear / Poly / RBF kernel choice as <code>mla/svm/svm.py</code>, trained online rather than via full QP for speed in-browser.</div>
+            <div class="note">Kernelized Pegasos solver on the dual soft-margin SVM objective, with Linear / Poly / RBF kernels, trained online rather than via full QP for speed in-browser.</div>
           </div>
         </div>
       </div>
@@ -164,7 +164,6 @@
     category: "Supervised - Classification",
     tagline: "linear / poly / RBF kernels",
     description: "A kernelized soft-margin SVM trained with the kernel-Pegasos online solver. Switch kernels to see why RBF handles the circular dataset that a linear kernel can't.",
-    sourceFile: "mla/svm/svm.py",
     info: {
       type: "Supervised - Classification (an SVR regression variant also exists). Max-margin kernel method.",
       scenario: "Classification with a clear or kernel-separable margin, on small-to-medium datasets, when a robust, theoretically-grounded margin-based classifier is wanted; kernels let it handle non-linear boundaries.",

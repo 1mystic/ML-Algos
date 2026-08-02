@@ -89,7 +89,7 @@
           </div>
           <div class="control-card">
             <h3>what's happening</h3>
-            <div class="note">A convolutional layer slides one small learned kernel across the image, computing a weighted sum at every position (the feature map). ReLU zeroes negative activations; max-pooling then downsamples by keeping the strongest response in each 2×2 block - the building blocks behind <code>mla/neuralnet</code>'s CNN layer, made tweakable here instead of learned.</div>
+            <div class="note">A convolutional layer slides one small learned kernel across the image, computing a weighted sum at every position (the feature map). ReLU zeroes negative activations; max-pooling then downsamples by keeping the strongest response in each 2×2 block - the building blocks of a CNN feature extractor, made tweakable here instead of learned.</div>
           </div>
         </div>
       </div>
@@ -172,7 +172,6 @@
     category: "Deep Learning",
     tagline: "convolution → ReLU → max-pool",
     description: "Draw a small image and watch it pass through one convolutional layer: a 3×3 kernel slides across the input, an optional ReLU clips negatives, and max-pooling downsamples the result.",
-    sourceFile: "mla/neuralnet",
     info: {
       type: "Building block of supervised deep nets - a parametric, weight-sharing feature-extraction layer (convolution).",
       scenario: "Image (or other grid-structured, e.g. spectrogram) data where spatially-local patterns like edges and textures matter, and you want far fewer parameters than a fully-connected layer by reusing one small filter everywhere.",

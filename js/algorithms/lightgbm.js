@@ -151,7 +151,6 @@
     category: "Supervised - Trees & Ensembles",
     tagline: "leaf-wise growth, histogram splits",
     description: "A gradient-boosting variant built for speed at scale: it grows each tree leaf-wise (always splitting whichever leaf helps most) instead of level-wise, and bins continuous features into histograms so split-finding is fast.",
-    sourceFile: "not in the original repo - added as a widely-used, high-performance extension of mla/ensemble/gbm.py's plain gradient boosting",
     info: {
       type: "Supervised - Regression/Classification. Histogram-based, leaf-wise (best-first) gradient-boosted tree ensemble.",
       scenario: "Very large or high-dimensional tabular datasets where training speed and memory matter - LightGBM trades some tree 'balance' for much faster training.",

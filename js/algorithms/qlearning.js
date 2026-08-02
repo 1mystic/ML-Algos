@@ -42,7 +42,7 @@
           <div class="control-card">
             <h3>state</h3>
             <div class="readout" id="ql-readout">–</div>
-            <div class="note">Tabular Q-learning: Q(s,a) += &alpha;(r + &gamma;&middot;max<sub>a'</sub>Q(s',a') − Q(s,a)), with an &epsilon;-greedy behavior policy - the update rule behind <code>mla/rl/dqn.py</code>'s deep variant, done here with an exact table since the state space is small.</div>
+            <div class="note">Tabular Q-learning: Q(s,a) += &alpha;(r + &gamma;&middot;max<sub>a'</sub>Q(s',a') − Q(s,a)), with an &epsilon;-greedy behavior policy - the same update rule that DQN approximates with a network, done here with an exact table since the state space is small.</div>
           </div>
         </div>
       </div>
@@ -203,7 +203,6 @@
     category: "Reinforcement Learning",
     tagline: "tabular TD control",
     description: "An agent learns a value for every (state, action) pair purely from trial and error and a delayed reward, via the Q-learning temporal-difference update. Paint walls, a goal, and a pit, then train and watch it find the route.",
-    sourceFile: "mla/rl/dqn.py",
     info: {
       type: "Reinforcement Learning - value-based, model-free, off-policy, tabular temporal-difference control.",
       scenario: "Sequential decision-making where an agent must learn purely from trial-and-error reward signals (not labeled examples) which actions lead to good long-term outcomes under delayed rewards.",

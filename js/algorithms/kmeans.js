@@ -27,7 +27,7 @@
           <div class="control-card">
             <h3>state</h3>
             <div class="readout" id="km-readout">–</div>
-            <div class="note">Lloyd's algorithm: assign each point to its closest centroid, then move each centroid to the mean of its assigned points, repeat - the same loop as <code>mla/kmeans.py</code>.</div>
+            <div class="note">Lloyd's algorithm: assign each point to its closest centroid, then move each centroid to the mean of its assigned points, repeat.</div>
           </div>
         </div>
       </div>
@@ -142,7 +142,6 @@
     category: "Unsupervised - Clustering",
     tagline: "Lloyd's algorithm, step-through",
     description: "Hard clustering via alternating assignment and centroid-averaging. Step through iterations one at a time to see exactly how the centroids converge.",
-    sourceFile: "mla/kmeans.py",
     info: {
       type: "Unsupervised - Clustering. Centroid-based, hard assignment.",
       scenario: "Partitioning unlabeled data into k compact, roughly spherical groups - customer segmentation, color quantization, or as an unsupervised pre-processing step.",

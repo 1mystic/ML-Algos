@@ -79,7 +79,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="tsne-readout">–</div>
-            <div class="note">Full (non-Barnes-Hut) t-SNE: high-D affinities P come from a per-point Gaussian kernel calibrated to the target perplexity via binary search; low-D affinities Q use a Student-t kernel; gradient descent with momentum minimizes KL(P‖Q) - the same objective as <code>mla/tsne.py</code>.</div>
+            <div class="note">Full (non-Barnes-Hut) t-SNE: high-D affinities P come from a per-point Gaussian kernel calibrated to the target perplexity via binary search; low-D affinities Q use a Student-t kernel; gradient descent with momentum minimizes KL(P‖Q).</div>
           </div>
         </div>
       </div>
@@ -173,7 +173,6 @@
     category: "Unsupervised - Dimensionality Reduction",
     tagline: "high-D neighborhoods → 2D map",
     description: "Embeds 5-dimensional clustered data into 2D by matching high-dimensional neighbor probabilities to a low-dimensional Student-t distribution via gradient descent. Step through iterations to watch clusters separate.",
-    sourceFile: "mla/tsne.py",
     info: {
       type: "Unsupervised - Non-linear dimensionality reduction, visualization-focused (no out-of-sample mapping).",
       scenario: "Visualizing high-dimensional data (embeddings, gene expression, learned features) in 2D/3D so that clusters close in high-D stay close in the 2D map.",

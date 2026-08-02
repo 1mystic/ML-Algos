@@ -1,6 +1,6 @@
 // Shared math + data-generation helpers used across algorithm modules.
-// Deliberately dependency-free (pure JS) so every module can rely on it
-// the same way every mla/*.py file relies on numpy.
+// Deliberately dependency-free (pure JS) so every algorithm and guide module
+// can rely on it without pulling in a numerical library.
 const MLU = (() => {
   let seed = 42;
   function rng() {

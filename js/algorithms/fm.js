@@ -69,7 +69,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="fm-readout">–</div>
-            <div class="note">Factorization Machine with only user/item one-hot features reduces to biased matrix factorization: prediction = w<sub>0</sub> + w<sub>u</sub> + w<sub>i</sub> + &lang;v<sub>u</sub>,v<sub>i</sub>&rang;, trained by SGD - the pairwise-interaction term from <code>mla/fm.py</code>, here with a 2D latent space so it's directly plottable.</div>
+            <div class="note">Factorization Machine with only user/item one-hot features reduces to biased matrix factorization: prediction = w<sub>0</sub> + w<sub>u</sub> + w<sub>i</sub> + &lang;v<sub>u</sub>,v<sub>i</sub>&rang;, trained by SGD - the pairwise-interaction term, here with a 2D latent space so it's directly plottable.</div>
           </div>
         </div>
       </div>
@@ -165,7 +165,6 @@
     category: "Supervised - Regression",
     tagline: "latent-vector pairwise interactions",
     description: "Predicts ratings in a sparse user×item matrix by learning a low-rank latent vector per user and item, so unseen pairs get a prediction from the dot product of their vectors. Edit the matrix and retrain to see the latent space reorganize.",
-    sourceFile: "mla/fm.py",
     info: {
       type: "Supervised - Regression/ranking. Factorized second-order feature-interaction model.",
       scenario: "Sparse, high-cardinality categorical data (user IDs × item IDs, ad click prediction with many categorical fields) where you want pairwise feature interactions without an explosion of parameters - a generalization of matrix factorization.",

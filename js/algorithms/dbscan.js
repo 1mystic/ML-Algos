@@ -148,7 +148,6 @@
     category: "Unsupervised - Clustering",
     tagline: "density-connectivity, no fixed k",
     description: "Density-Based Spatial Clustering: groups points that are densely connected through overlapping neighborhoods, and leaves sparse points labeled as noise instead of forcing them into a cluster.",
-    sourceFile: "not in the original repo - added as a commonly-requested density-based clustering method",
     info: {
       type: "Unsupervised - Clustering. Density-based, does not require choosing the number of clusters in advance.",
       scenario: "Clusters have arbitrary (non-spherical) shapes, contain noise/outliers that shouldn't be forced into any cluster, or you don't want to pre-specify k - the classic limitation of K-Means this addresses.",

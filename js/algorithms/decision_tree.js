@@ -76,7 +76,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="dt-readout">–</div>
-            <div class="note" id="dt-note">Recursive Gini-impurity splitting on axis-aligned thresholds, as in <code>mla/ensemble/random_forest.py</code>'s base tree.</div>
+            <div class="note" id="dt-note">Recursive Gini-impurity splitting on axis-aligned thresholds.</div>
           </div>
         </div>
       </div>
@@ -101,8 +101,8 @@
       document.getElementById("dt-nest-val").textContent = nest();
       document.getElementById("dt-nest-field").style.display = mode() === "forest" ? "" : "none";
       document.getElementById("dt-note").innerHTML = mode() === "forest"
-        ? "Bagging: each tree trains on a bootstrap resample of the points; the boundary shown is the ensemble's majority vote - same idea as <code>mla/ensemble/random_forest.py</code>."
-        : "Recursive Gini-impurity splitting on axis-aligned thresholds, as in <code>mla/ensemble/random_forest.py</code>'s base tree.";
+        ? "Bagging: each tree trains on a bootstrap resample of the points; the boundary shown is the ensemble's majority vote."
+        : "Recursive Gini-impurity splitting on axis-aligned thresholds.";
 
       let trees = [];
       if (points.length >= 4) {
@@ -178,7 +178,6 @@
     category: "Supervised - Trees & Ensembles",
     tagline: "Gini splits, optional bagging",
     description: "A CART-style classifier that recursively splits on the axis-aligned threshold that most reduces Gini impurity. Switch to random forest mode to see bagged trees smooth out the blocky boundary.",
-    sourceFile: "mla/ensemble/random_forest.py",
     info: {
       type: "Supervised - Classification/Regression. Non-parametric, tree-based (single tree); bagged ensemble in random-forest mode.",
       scenario: "You need an interpretable, non-linear model that handles mixed feature types without scaling (single tree); switch to random forest when you want more accuracy/robustness and can trade away some interpretability.",

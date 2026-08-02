@@ -43,7 +43,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="lr-readout">–</div>
-            <div class="note">Closed-form ridge regression: &beta; = (XᵀX + &lambda;I)⁻¹Xᵀy, recomputed on every edit - same normal-equation approach as <code>mla/linear_models.py</code>, generalized to a polynomial basis so you can see over/underfitting live.</div>
+            <div class="note">Closed-form ridge regression: &beta; = (XᵀX + &lambda;I)⁻¹Xᵀy, recomputed on every edit, generalized to a polynomial basis so you can see over/underfitting live.</div>
           </div>
         </div>
       </div>
@@ -134,7 +134,6 @@
     category: "Supervised - Regression",
     tagline: "ridge + polynomial basis",
     description: "Ordinary/ridge regression fit via the normal equations, extended with a polynomial basis so you can watch under- and overfitting happen as you drag points and change degree/&lambda; live.",
-    sourceFile: "mla/linear_models.py",
     info: {
       type: "Supervised - Regression. Parametric linear model (generalized here with a polynomial basis and an L2/ridge penalty).",
       scenario: "You need a simple, interpretable baseline for predicting a continuous target from numeric features - trend estimation, forecasting with few features, or as a first model before trying anything non-linear.",

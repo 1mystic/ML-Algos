@@ -35,7 +35,7 @@
           <div class="control-card">
             <h3>state</h3>
             <div class="readout" id="gm-readout">–</div>
-            <div class="note">Expectation-Maximization: E-step computes soft responsibilities under each Gaussian, M-step re-estimates each component's mean/covariance/weight from those responsibilities - as in <code>mla/gaussian_mixture.py</code>.</div>
+            <div class="note">Expectation-Maximization: E-step computes soft responsibilities under each Gaussian, M-step re-estimates each component's mean/covariance/weight from those responsibilities.</div>
           </div>
         </div>
       </div>
@@ -174,7 +174,6 @@
     category: "Unsupervised - Clustering",
     tagline: "EM algorithm, soft clusters",
     description: "Soft clustering via Expectation-Maximization: components are full 2D Gaussians (with orientation), fit by alternating responsibility estimation (E) and weighted re-fitting (M).",
-    sourceFile: "mla/gaussian_mixture.py",
     info: {
       type: "Unsupervised - Clustering (soft/probabilistic). Generative mixture model.",
       scenario: "Clusters that overlap or have different sizes/shapes/orientations, or when you need membership probabilities rather than hard labels - a probabilistic generalization of K-Means.",

@@ -52,7 +52,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="gbm-readout">–</div>
-            <div class="note">Gradient boosting on squared error: F<sub>0</sub> = mean(y); each new shallow tree is fit to the current residual y − F(x), then added in as F += &eta;&middot;tree(x) - the loop in <code>mla/ensemble/gbm.py</code>.</div>
+            <div class="note">Gradient boosting on squared error: F<sub>0</sub> = mean(y); each new shallow tree is fit to the current residual y − F(x), then added in as F += &eta;&middot;tree(x).</div>
           </div>
         </div>
       </div>
@@ -127,7 +127,6 @@
     category: "Supervised - Trees & Ensembles",
     tagline: "stagewise residual fitting",
     description: "Builds an ensemble one shallow regression tree at a time, each fit to the previous ensemble's residuals and shrunk in by a learning rate. Step through boosting rounds to watch the fit tighten.",
-    sourceFile: "mla/ensemble/gbm.py",
     info: {
       type: "Supervised - Regression (classification variants swap in a different loss). Additive ensemble, sequential (stagewise) boosting.",
       scenario: "High predictive accuracy on tabular data when you can trade some interpretability and training time for it - the idea behind XGBoost/LightGBM.",

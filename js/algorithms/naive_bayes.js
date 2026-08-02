@@ -48,7 +48,7 @@
           <div class="control-card">
             <h3>model</h3>
             <div class="readout" id="nb-readout">–</div>
-            <div class="note">Gaussian Naive Bayes: each feature modeled with an independent per-class normal distribution; prediction = argmax of log-prior + log-likelihood, matching <code>mla/naive_bayes.py</code>.</div>
+            <div class="note">Gaussian Naive Bayes: each feature modeled with an independent per-class normal distribution; prediction = argmax of log-prior + log-likelihood.</div>
           </div>
         </div>
       </div>
@@ -134,7 +134,6 @@
     category: "Supervised - Classification",
     tagline: "independent per-class gaussians",
     description: "Fits an independent 1D normal distribution per feature per class, then classifies by the highest log-prior + log-likelihood. Ellipses show each class's fitted 1σ Gaussian.",
-    sourceFile: "mla/naive_bayes.py",
     info: {
       type: "Supervised - Classification. Generative probabilistic model (Gaussian Naive Bayes).",
       scenario: "A fast, simple baseline classifier, especially effective with high-dimensional or sparse features (text), or whenever a cheap probabilistic model is preferable to an iteratively-trained one.",

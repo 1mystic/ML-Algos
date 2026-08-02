@@ -56,7 +56,7 @@
           <div class="control-card">
             <h3>energy-based sampling</h3>
             <div class="readout" id="rbm-readout">–</div>
-            <div class="note">A Restricted Boltzmann Machine has no visible-visible or hidden-hidden connections, so both conditionals factorize: p(h<sub>j</sub>=1|v)=&sigma;(&sum;<sub>i</sub>W<sub>ij</sub>v<sub>i</sub>+c<sub>j</sub>) and p(v<sub>i</sub>=1|h)=&sigma;(&sum;<sub>j</sub>W<sub>ij</sub>h<sub>j</sub>+b<sub>i</sub>). Each "Gibbs step" samples h from v, then resamples v from that h - the block-Gibbs sweep used for contrastive divergence in <code>mla/rbm.py</code>, shown here with fixed random weights rather than trained ones.</div>
+            <div class="note">A Restricted Boltzmann Machine has no visible-visible or hidden-hidden connections, so both conditionals factorize: p(h<sub>j</sub>=1|v)=&sigma;(&sum;<sub>i</sub>W<sub>ij</sub>v<sub>i</sub>+c<sub>j</sub>) and p(v<sub>i</sub>=1|h)=&sigma;(&sum;<sub>j</sub>W<sub>ij</sub>h<sub>j</sub>+b<sub>i</sub>). Each "Gibbs step" samples h from v, then resamples v from that h - the block-Gibbs sweep used for contrastive divergence, shown here with fixed random weights rather than trained ones.</div>
           </div>
         </div>
       </div>
@@ -118,7 +118,6 @@
     category: "Deep Learning",
     tagline: "block-Gibbs sampling",
     description: "Draw a binary pattern on the visible layer and alternately sample hidden-given-visible and visible-given-hidden - the block-Gibbs sweep at the heart of RBM training and generation.",
-    sourceFile: "mla/rbm.py",
     info: {
       type: "Unsupervised - Generative, energy-based, bipartite undirected graphical model.",
       scenario: "Learning a probability distribution over binary (or binarized) data to generate samples, extract latent features, or pretrain deeper networks (stacked RBMs historically formed deep belief networks).",

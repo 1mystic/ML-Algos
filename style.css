@@ -357,6 +357,168 @@ a { color: inherit; }
   background: var(--pastel-green-soft);
 }
 
+/* ---------- supplementary guide pages ---------- */
+.guide-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+}
+
+.guide-kicker {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  font-weight: 600;
+  color: var(--pastel-green);
+  background: var(--pastel-green-soft);
+  border: 1px solid color-mix(in srgb, var(--pastel-green) 35%, transparent);
+  border-radius: 5px;
+  padding: 4px 9px;
+}
+
+.guide-bar .print-btn { margin-bottom: 0; }
+
+.guide-p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin: 0 0 14px;
+  max-width: 900px;
+}
+
+.guide-p b { color: var(--text); }
+
+.ref-section > .info-list,
+.ref-section > .hscroll { margin-bottom: 16px; }
+.ref-section > .info-list:last-child,
+.ref-section > .hscroll:last-child { margin-bottom: 0; }
+
+/* decision chart */
+.branch { margin-bottom: 16px; }
+
+.branch-q {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.branch-arms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.branch-arm {
+  position: relative;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--text-faint);
+  background: var(--bg-raised);
+  border-radius: 8px;
+  padding: 11px 14px;
+}
+
+.branch-arm.accent-green { border-top-color: var(--pastel-green); }
+.branch-arm.accent-red   { border-top-color: var(--pastel-red); }
+
+.branch-when {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+  margin-bottom: 5px;
+}
+
+.branch-then { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.45; }
+
+.branch-note { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; margin-top: 5px; }
+
+/* phased pipeline */
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: start;
+}
+
+.lane {
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  border-radius: 9px;
+  padding: 13px 15px;
+  border-top: 3px solid var(--pastel-green);
+}
+
+.lane.accent-red   { border-top-color: var(--pastel-red); }
+.lane.accent-blue  { border-top-color: var(--series-1); }
+.lane.accent-amber { border-top-color: var(--series-4); }
+.lane.accent-plum  { border-top-color: var(--series-5); }
+
+.lane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.lane-num {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--text-dim);
+}
+
+.lane-note { font-size: 12px; color: var(--text-faint); line-height: 1.5; margin-bottom: 8px; }
+
+.lane-items {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.lane-items li { margin-bottom: 3px; }
+
+/* aside */
+.callout {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--pastel-green);
+  background: color-mix(in srgb, var(--pastel-green) 7%, var(--bg-raised));
+  border-radius: 8px;
+  padding: 12px 15px;
+  margin-bottom: 16px;
+}
+
+.callout.accent-red {
+  border-left-color: var(--pastel-red);
+  background: color-mix(in srgb, var(--pastel-red) 7%, var(--bg-raised));
+}
+
+.callout-title { font-size: 13.5px; font-weight: 700; color: var(--text); margin-bottom: 5px; }
+.callout.accent-green .callout-title { color: var(--pastel-green); }
+.callout.accent-red .callout-title { color: var(--pastel-red); }
+.callout-text { font-size: 13.5px; color: var(--text-dim); line-height: 1.65; }
+
 /* brief tint so you can see where a search result landed you */
 .ref-section.section-flash {
   animation: section-flash 1.6s ease-out;
@@ -557,19 +719,6 @@ a { color: inherit; }
   max-width: 780px;
 }
 
-.source-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-faint);
-  border: 1px solid var(--border);
-  padding: 3px 9px;
-  border-radius: 5px;
-}
-
-.source-link:hover { color: var(--text); border-color: var(--text-dim); }
-
 /* ---------- panel / tabs ---------- */
 .tabs {
   display: flex;
@@ -766,6 +915,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+
+/* Grids sit between other section blocks (math steps, tables), so they need
+   trailing space of their own. The last block in a section does not. */
+.ref-section > .info-grid { margin-bottom: 16px; }
+.ref-section > .info-grid:last-child { margin-bottom: 0; }
 
 @media (max-width: 720px) {
   .info-grid { grid-template-columns: 1fr; }
@@ -1343,7 +1497,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* Chrome-only elements have no place on paper. */
   .topbar, .sidebar, .menu-toggle, .theme-toggle, .search,
-  .tabs, .banner, .stage-toolbar, .controls, .btn-row, button {
+  .tabs, .guide-bar, .banner, .stage-toolbar, .controls, .btn-row, button {
     display: none !important;
   }
 
@@ -1382,7 +1536,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
     margin-bottom: 8pt;
   }
 
-  .info-block, .math-step, .why-item, .flow-wrap, .worked-example {
+  .info-block, .math-step, .why-item, .flow-wrap, .worked-example,
+  .lane, .branch-arm, .callout {
     break-inside: avoid;
     page-break-inside: avoid;
     background: #fff;
@@ -1411,6 +1566,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   .inline-formula, .formula { white-space: normal; word-break: break-word; }
 
   .pro-con { grid-template-columns: 1fr 1fr; gap: 8pt; }
+  .lanes { grid-template-columns: repeat(3, 1fr); gap: 7pt; }
+  .branch-arms { grid-template-columns: repeat(2, 1fr); gap: 7pt; }
+  .branch, .lanes { break-inside: avoid; page-break-inside: avoid; }
+  .guide-p { font-size: 10.5pt; max-width: none; }
   .info-grid { gap: 8pt; }
 
   svg, canvas { max-width: 100% !important; height: auto !important; }

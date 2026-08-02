@@ -37,7 +37,7 @@
           <div class="control-card">
             <h3>training</h3>
             <div class="readout" id="nn-readout">–</div>
-            <div class="note">Feed-forward MLP with backprop via TensorFlow.js autodiff (Adam + binary cross-entropy) - the same architecture family as <code>mla/neuralnet</code>, trained continuously in the browser. Changing the architecture rebuilds the network.</div>
+            <div class="note">Feed-forward MLP with backprop via TensorFlow.js autodiff (Adam + binary cross-entropy), trained continuously in the browser. Changing the architecture rebuilds the network.</div>
           </div>
         </div>
       </div>
@@ -154,7 +154,6 @@
     category: "Deep Learning",
     tagline: "TensorFlow.js, trained live",
     description: "A configurable feed-forward network trained live in your browser with TensorFlow.js. Try XOR or circular data with a linear-only setup (0 units in layer 2, relu off) to see why depth matters.",
-    sourceFile: "mla/neuralnet",
     info: {
       type: "Supervised - Classification/Regression. Parametric, non-linear (feed-forward multilayer perceptron).",
       scenario: "The true decision boundary is complex/non-linear and enough data exists to fit many parameters - the general-purpose workhorse of modern ML.",

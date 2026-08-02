@@ -139,7 +139,6 @@
     category: "Supervised - Trees & Ensembles",
     tagline: "regularized, 2nd-order boosting",
     description: "Gradient boosting with a Newton (2nd-order, gradient+hessian) approximation to the loss, an explicit per-leaf L2 penalty, and a minimum-gain threshold that prunes low-value splits automatically.",
-    sourceFile: "not in the original repo - added as a widely-used, more regularized extension of mla/ensemble/gbm.py's plain gradient boosting",
     info: {
       type: "Supervised - Regression/Classification. Regularized, second-order (Newton) gradient-boosted tree ensemble.",
       scenario: "Top predictive accuracy on tabular data with finer control over overfitting than plain gradient boosting - historically the dominant tabular-competition baseline.",

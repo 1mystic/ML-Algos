@@ -78,7 +78,7 @@
       </div>
     `;
 
-    const LSTM_NOTE = "At each step the LSTM computes forget (f), input (i) and output (o) gates plus a candidate (g), then updates the cell state c<sub>t</sub>=f&middot;c<sub>t-1</sub>+i&middot;g and hidden state h<sub>t</sub>=o&middot;tanh(c<sub>t</sub>) - the gating equations behind <code>mla/neuralnet</code>'s LSTM layer, run here with fixed random weights so you can watch the mechanics without a training loop.";
+    const LSTM_NOTE = "At each step the LSTM computes forget (f), input (i) and output (o) gates plus a candidate (g), then updates the cell state c<sub>t</sub>=f&middot;c<sub>t-1</sub>+i&middot;g and hidden state h<sub>t</sub>=o&middot;tanh(c<sub>t</sub>) - the LSTM gating equations, run here with fixed random weights so you can watch the mechanics without a training loop.";
     const RNN_NOTE = "A vanilla RNN collapses all of that into one update: h<sub>t</sub> = tanh(W<sub>x</sub>x<sub>t</sub> + W<sub>h</sub>h<sub>t-1</sub> + b). Compare its trace to the LSTM's - notice how much faster it can saturate or forget.";
 
     let seq = [1, 0, 1, 1, 0, 0, 1, 0, 1, 1];
@@ -174,7 +174,6 @@
     category: "Deep Learning",
     tagline: "step through the gate equations",
     description: "Step a recurrent cell through a binary sequence one timestep at a time, watching every gate activation, the cell state, and the hidden state update live. Toggle between a vanilla RNN and an LSTM to compare.",
-    sourceFile: "mla/neuralnet/rnn.py",
     info: {
       type: "Building block of sequence models - recurrent, parametric, stateful (vanilla RNN or LSTM cell).",
       scenario: "Sequence data where order and (for LSTM) long-range dependencies matter - text, time series, audio - anywhere a fixed-size input vector isn't natural.",

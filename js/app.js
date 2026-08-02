@@ -10,6 +10,7 @@ const MLApp = (() => {
     "Unsupervised - Dimensionality Reduction",
     "Deep Learning",
     "Reinforcement Learning",
+    "Supplementary",
   ];
   const CATEGORY_META = {
     "Supervised - Regression": {
@@ -35,6 +36,10 @@ const MLApp = (() => {
     "Deep Learning": {
       color: "var(--series-6)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="7" r="1.5"/><circle cx="4" cy="17" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="20" r="1.5"/><circle cx="20" cy="9" r="1.5"/><circle cx="20" cy="16" r="1.5"/><line x1="4" y1="7" x2="12" y2="4"/><line x1="4" y1="7" x2="12" y2="12"/><line x1="4" y1="17" x2="12" y2="12"/><line x1="4" y1="17" x2="12" y2="20"/><line x1="12" y1="4" x2="20" y2="9"/><line x1="12" y1="12" x2="20" y2="9"/><line x1="12" y1="12" x2="20" y2="16"/><line x1="12" y1="20" x2="20" y2="16"/></svg>`,
+    },
+    "Supplementary": {
+      color: "var(--series-3)",
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H12v18H6.5A2.5 2.5 0 0 0 4 18.5Z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H12v18h5.5a2.5 2.5 0 0 1 2.5 2.5Z" transform="translate(0,-1.5)"/><path d="M12 3v18"/></svg>`,
     },
     "Reinforcement Learning": {
       color: "var(--series-7)",
@@ -122,7 +127,7 @@ const MLApp = (() => {
     main.innerHTML = `
       <div class="main-header">
         <h1>ML Algorithms - Interactive Lab</h1>
-        <p>A visual, hands-on companion to <b>rushter/MLAlgorithms</b> - a from-scratch collection of ML algorithms in Python/numpy, cloned alongside this page. Every demo below reimplements the same algorithm in JavaScript so you can click, drag and step through it live. Pick one from the sidebar, or a card below.</p>
+        <p>An interactive reference for classical machine learning. Every algorithm below is implemented from scratch in JavaScript, so you can click, drag and step through it live, and each one carries a full study guide covering the mathematics, assumptions, tuning, pitfalls and interview questions. Pick one from the sidebar, search above, or start with a card below.</p>
       </div>
       <div class="home-categories">
         ${order.map((cat) => {
@@ -160,26 +165,59 @@ const MLApp = (() => {
     renderSidebar();
   }
 
+  const PRINT_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>`;
+
+  // Supplementary pages have no interactive demo, so they skip the tab bar and
+  // render their prose straight into the reference container.
+  function renderGuide(algo) {
+    const main = document.getElementById("main");
+    main.innerHTML = `
+      <div class="main-header">
+        <h1>${algo.name}</h1>
+        <p>${algo.description}</p>
+      </div>
+      <div class="guide-bar">
+        <span class="guide-kicker">Supplementary guide</span>
+        <button class="print-btn" id="print-btn" title="Print this guide (A4)">${PRINT_ICON} print</button>
+      </div>
+      <div id="tab-ref"></div>
+    `;
+    renderSidebar();
+    renderGuideBody(document.getElementById("tab-ref"), algo.guide);
+    const printBtn = document.getElementById("print-btn");
+    if (printBtn) printBtn.onclick = () => window.print();
+    applyPendingFocus();
+  }
+
+  function applyPendingFocus() {
+    if (!pendingFocus) return;
+    const target = pendingFocus;
+    pendingFocus = null;
+    const el = document.querySelector(`[data-section="${target}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "start", behavior: "smooth" });
+      el.classList.add("section-flash");
+      setTimeout(() => el.classList.remove("section-flash"), 1600);
+    }
+  }
+
   function renderAlgo(id) {
     const algo = byId(id);
     if (!algo) { renderHome(); return; }
     if (typeof activeCleanup === "function") { try { activeCleanup(); } catch (e) {} }
     activeCleanup = null;
     active = id;
+    if (algo.kind === "guide") { renderGuide(algo); return; }
     const main = document.getElementById("main");
     main.innerHTML = `
       <div class="main-header">
         <h1>${algo.name}</h1>
         <p>${algo.description}</p>
-        <span class="source-link">reference: ${algo.sourceFile}</span>
       </div>
       <div class="tabs">
         <div class="tab active" data-tab="play">Playground</div>
         <div class="tab" data-tab="ref">Reference</div>
-        <button class="print-btn" id="print-btn" title="Print the reference sheet (A4)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
-          print
-        </button>
+        <button class="print-btn" id="print-btn" title="Print the reference sheet (A4)">${PRINT_ICON} print</button>
       </div>
       <div id="tab-play"></div>
       <div id="tab-ref" style="display:none"></div>
@@ -207,17 +245,7 @@ const MLApp = (() => {
 
     // Arriving from a content search result: open the reference tab and jump to
     // the matching section.
-    if (pendingFocus) {
-      const target = pendingFocus;
-      pendingFocus = null;
-      showTab("ref");
-      const el = document.querySelector(`[data-section="${target}"]`);
-      if (el) {
-        el.scrollIntoView({ block: "start", behavior: "smooth" });
-        el.classList.add("section-flash");
-        setTimeout(() => el.classList.remove("section-flash"), 1600);
-      }
-    }
+    if (pendingFocus) { showTab("ref"); applyPendingFocus(); }
   }
 
   // ---- reference-tab rendering helpers -------------------------------------
@@ -277,10 +305,78 @@ const MLApp = (() => {
       </div>`).join("")}</div>`;
   }
 
+  // A decision chart: one question, several labelled outcomes. Outcomes wrap
+  // onto their own rows on narrow screens rather than scrolling sideways.
+  function branch(node) {
+    if (!node) return "";
+    return `<div class="branch">
+      <div class="branch-q">${node.q}</div>
+      <div class="branch-arms">${(node.arms || []).map((a) => `
+        <div class="branch-arm${a.accent ? " accent-" + a.accent : ""}">
+          <div class="branch-when">${a.when}</div>
+          <div class="branch-then">${a.then}</div>
+          ${a.note ? `<div class="branch-note">${a.note}</div>` : ""}
+        </div>`).join("")}</div>
+    </div>`;
+  }
+
+  // A phased pipeline: named stages, each holding an ordered list of steps.
+  // Stages sit side by side on desktop and stack on mobile.
+  function lanes(stages) {
+    if (!stages || !stages.length) return "";
+    return `<div class="lanes">${stages.map((s, i) => `
+      <div class="lane${s.accent ? " accent-" + s.accent : ""}">
+        <div class="lane-head"><span class="lane-num">${i + 1}</span>${s.name}</div>
+        ${s.note ? `<div class="lane-note">${s.note}</div>` : ""}
+        <ul class="lane-items">${(s.items || []).map((it) => `<li>${it}</li>`).join("")}</ul>
+      </div>`).join("")}</div>`;
+  }
+
+  // A short highlighted aside, tinted green for guidance and red for warnings.
+  function callout(c) {
+    if (!c) return "";
+    return `<div class="callout accent-${c.tone || "green"}">
+      <div class="callout-title">${c.title}</div>
+      <div class="callout-text">${c.text}</div>
+    </div>`;
+  }
+
   function codeBlock(src) {
     if (!src) return "";
     const esc = src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return `<pre class="code-block"><code>${esc}</code></pre>`;
+  }
+
+  // Guide pages describe their content as an ordered list of typed blocks, so a
+  // page can mix prose, tables and diagrams without a fixed schema.
+  function renderBlock(b) {
+    if (typeof b === "string") return `<p class="guide-p">${b}</p>`;
+    if (b.p) return `<p class="guide-p">${b.p}</p>`;
+    if (b.list) return list(b.list);
+    if (b.olist) return `<ol class="info-list">${b.olist.map((x) => `<li>${x}</li>`).join("")}</ol>`;
+    if (b.table) return table(b.table.headers, b.table.rows);
+    if (b.steps) return steps(b.steps);
+    if (b.flow) return `<div class="flow-wrap">${b.title ? `<div class="flow-title">${b.title}</div>` : ""}${flow(b.flow)}</div>`;
+    if (b.lanes) return lanes(b.lanes);
+    if (b.branch) return branch(b.branch);
+    if (b.callout) return callout(b.callout);
+    if (b.qa) return whyChain(b.qa);
+    if (b.code) return codeBlock(b.code);
+    if (b.cards) {
+      return `<div class="info-grid">${b.cards.map((c) => `
+        <div class="info-block${c.span ? " span2" : ""}">
+          <h4>${c.name}</h4>
+          ${c.list ? list(c.list) : `<p>${c.note}</p>`}
+        </div>`).join("")}</div>`;
+    }
+    return "";
+  }
+
+  function renderGuideBody(container, guide) {
+    let n = 0;
+    container.innerHTML = (guide || []).map((sec) =>
+      section(++n, sec.title, (sec.body || []).map(renderBlock).join(""), sec.slug)
+    ).join("");
   }
 
   function renderInfo(container, info) {
@@ -429,6 +525,16 @@ const MLApp = (() => {
 
   const strip = (s) => String(s).replace(/<[^>]*>/g, "");
 
+  // Badge text for a hit. Algorithm pages use the fixed SECTIONS table; guide
+  // pages label hits with their own section title.
+  function sectionLabel(algo, slug) {
+    if (algo.kind === "guide") {
+      const sec = (algo.guide || []).find((s) => s.slug === slug);
+      if (sec) return sec.title.replace(/&amp;/g, "&");
+    }
+    return SECTIONS[slug] ? SECTIONS[slug].label : slug;
+  }
+
   // Flattens one algorithm's info into { section, text } passages. Built once,
   // lazily, because every algorithm file must have registered first.
   function buildEntries(a) {
@@ -436,6 +542,34 @@ const MLApp = (() => {
     const out = [];
     const push = (sec, text) => { if (text) out.push({ section: sec, text: strip(text) }); };
     const pushAll = (sec, arr, fn) => (arr || []).forEach((x) => push(sec, fn(x)));
+
+    // Guide pages carry typed blocks instead of the algorithm schema; index each
+    // block against its own section so hits scroll to the right place.
+    if (a.kind === "guide") {
+      for (const sec of a.guide || []) {
+        const s = sec.slug;
+        for (const b of sec.body || []) {
+          if (typeof b === "string") { push(s, b); continue; }
+          if (b.p) push(s, b.p);
+          if (b.list) b.list.forEach((x) => push(s, x));
+          if (b.olist) b.olist.forEach((x) => push(s, x));
+          if (b.table) b.table.rows.forEach((r) => push(s, r.join(" - ")));
+          if (b.steps) b.steps.forEach((x) => push(s, `${x.title}: ${x.formula || ""} ${x.note || ""}`));
+          if (b.flow) b.flow.forEach((x) => push(s, `${x.label} ${x.note || ""}`));
+          if (b.lanes) b.lanes.forEach((l) => { push(s, `${l.name}: ${l.note || ""}`); (l.items || []).forEach((it) => push(s, it)); });
+          if (b.branch) { push(s, b.branch.q); (b.branch.arms || []).forEach((x) => push(s, `${x.when}: ${x.then} ${x.note || ""}`)); }
+          if (b.callout) push(s, `${b.callout.title}: ${b.callout.text}`);
+          if (b.qa) b.qa.forEach((qa) => { push(s, qa.q); push(s, `${qa.q} ${qa.a}`); });
+          if (b.cards) b.cards.forEach((c) => push(s, `${c.name}: ${c.note || (c.list || []).join(" ")}`));
+          if (b.code) push(s, b.code);
+        }
+      }
+      // Attribute the page summary to the first section, since guides have no
+      // fixed "concept" anchor to scroll to.
+      const first = (a.guide || [])[0];
+      if (first) push(first.slug, a.description);
+      return out;
+    }
 
     if (i.intuition) {
       push("concept", i.intuition.definition);
@@ -680,9 +814,9 @@ const MLApp = (() => {
               <span class="search-item-text"><span class="search-item-meta">${escapeHtml(r.algo.tagline)}</span></span>
             </div>`;
           const hitRows = r.hits.map((h) => {
-            rows.push({ algo: r.algo, section: SECTIONS[h.section].slug });
+            rows.push({ algo: r.algo, section: h.section });
             return `<div class="search-item" role="option">
-              <span class="search-badge">${SECTIONS[h.section].label}</span>
+              <span class="search-badge">${escapeHtml(sectionLabel(r.algo, h.section))}</span>
               <span class="search-item-text"><span class="search-item-snippet">${snippet(h.text, q)}</span></span>
             </div>`;
           }).join("");
@@ -744,5 +878,5 @@ const MLApp = (() => {
 
   // `registry` and `renderInfo` are exposed so the reference pages can be
   // rendered headlessly and checked for gaps without a browser.
-  return { register, init, registry, renderInfo, searchAll };
+  return { register, init, registry, renderInfo, renderGuideBody, searchAll };
 })();

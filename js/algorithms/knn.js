@@ -40,7 +40,7 @@
           <div class="control-card">
             <h3>live query</h3>
             <div class="readout" id="knn-readout">move the mouse over the plot</div>
-            <div class="note">Background shading = majority vote of the k nearest neighbors at every grid cell, recomputed as you add points or change k - the same brute-force vote as <code>mla/knn.py</code>.</div>
+            <div class="note">Background shading = majority vote of the k nearest neighbors at every grid cell, recomputed as you add points or change k.</div>
           </div>
         </div>
       </div>
@@ -131,7 +131,6 @@
     category: "Supervised - Classification",
     tagline: "brute-force vote, live query",
     description: "Classifies a query point by majority vote among its k closest training points. Move the mouse to query live; the shaded background is that same vote evaluated on a grid.",
-    sourceFile: "mla/knn.py",
     info: {
       type: "Supervised - Classification (a regression variant also exists). Non-parametric, instance-based ('lazy') learning.",
       scenario: "Irregular / non-linear decision boundaries where enough labeled data exists near any likely query point, and a training phase isn't wanted or needed.",

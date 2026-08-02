@@ -44,6 +44,9 @@ const MLApp = (() => {
 
   let active = null;
   let activeCleanup = null;
+  // Section slug to reveal after the next algorithm render, set when a search
+  // result points at a specific passage rather than the page as a whole.
+  let pendingFocus = null;
 
   function register(algo) { registry.push(algo); }
 
@@ -173,6 +176,10 @@ const MLApp = (() => {
       <div class="tabs">
         <div class="tab active" data-tab="play">Playground</div>
         <div class="tab" data-tab="ref">Reference</div>
+        <button class="print-btn" id="print-btn" title="Print the reference sheet (A4)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
+          print
+        </button>
       </div>
       <div id="tab-play"></div>
       <div id="tab-ref" style="display:none"></div>
@@ -183,14 +190,34 @@ const MLApp = (() => {
     if (typeof cleanup === "function") activeCleanup = cleanup;
     if (algo.info) renderInfo(document.getElementById("tab-ref"), algo.info);
 
+    function showTab(which) {
+      main.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === which));
+      document.getElementById("tab-play").style.display = which === "play" ? "" : "none";
+      document.getElementById("tab-ref").style.display = which === "ref" ? "" : "none";
+    }
+
     main.querySelectorAll(".tab").forEach((tab) => {
-      tab.onclick = () => {
-        main.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-        tab.classList.add("active");
-        document.getElementById("tab-play").style.display = tab.dataset.tab === "play" ? "" : "none";
-        document.getElementById("tab-ref").style.display = tab.dataset.tab === "ref" ? "" : "none";
-      };
+      tab.onclick = () => showTab(tab.dataset.tab);
     });
+
+    // The print stylesheet always lays out the reference sheet, so switch to it
+    // first: printing what you cannot see is disorienting.
+    const printBtn = document.getElementById("print-btn");
+    if (printBtn) printBtn.onclick = () => { showTab("ref"); window.print(); };
+
+    // Arriving from a content search result: open the reference tab and jump to
+    // the matching section.
+    if (pendingFocus) {
+      const target = pendingFocus;
+      pendingFocus = null;
+      showTab("ref");
+      const el = document.querySelector(`[data-section="${target}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "start", behavior: "smooth" });
+        el.classList.add("section-flash");
+        setTimeout(() => el.classList.remove("section-flash"), 1600);
+      }
+    }
   }
 
   // ---- reference-tab rendering helpers -------------------------------------
@@ -199,9 +226,10 @@ const MLApp = (() => {
   // A titled full-width section of the reference page. Returns "" when the
   // section has no content, so every part of the schema below is optional and
   // algorithms can be migrated to the expanded format one at a time.
-  function section(num, title, body) {
+  // `slug` matches the SECTIONS keys below so a search hit can scroll here.
+  function section(num, title, body, slug) {
     if (!body) return "";
-    return `<section class="ref-section">
+    return `<section class="ref-section"${slug ? ` data-section="${slug}"` : ""}>
       <h2 class="ref-h2"><span class="ref-num">${num}</span>${title}</h2>
       ${body}
     </section>`;
@@ -292,43 +320,43 @@ const MLApp = (() => {
     ].join("");
 
     container.innerHTML = [
-      section(num(), "Core concept", overview),
-      section(num(), "Mathematics &amp; mechanism", mathBody),
-      section(num(), "Loss function &amp; optimization", lossBody),
+      section(num(), "Core concept", overview, "concept"),
+      section(num(), "Mathematics &amp; mechanism", mathBody, "math"),
+      section(num(), "Loss function &amp; optimization", lossBody, "loss"),
       i.assumptions ? section(num(), "Key assumptions",
-        table(["Assumption", "Why it matters", "How to check"], i.assumptions.map((a) => [a.name, a.why, a.check]))) : "",
+        table(["Assumption", "Why it matters", "How to check"], i.assumptions.map((a) => [a.name, a.why, a.check])), "assumptions") : "",
       i.regularization ? section(num(), "Regularization &amp; variants",
-        table(["Variant", "Formula", "Effect"], i.regularization.map((r) => [r.name, `<span class="inline-formula">${r.formula}</span>`, r.note]))) : "",
+        table(["Variant", "Formula", "Effect"], i.regularization.map((r) => [r.name, `<span class="inline-formula">${r.formula}</span>`, r.note])), "regularization") : "",
       section(num(), "Hyperparameters &amp; tuning",
         i.hyperparameters
           ? table(["Hyperparameter", "Typical range", "Effect of increasing", "Tuning strategy"],
               i.hyperparameters.map((h) => [h.name, `<span class="inline-formula">${h.range}</span>`, h.increasing, h.strategy]))
-          : table(["Parameter", "Effect"], i.parameters.map((p) => [p.name, p.effect]))),
+          : table(["Parameter", "Effect"], i.parameters.map((p) => [p.name, p.effect])), "hyperparameters"),
       section(num(), "Evaluation &amp; diagnostics", `
         <div class="info-grid">
           <div class="info-block"><h4>Evaluation metrics</h4>${list(i.metrics)}</div>
           <div class="info-block"><h4>Typical uses</h4>${list(i.typicalUses)}</div>
           ${i.diagnostics ? `<div class="info-block span2"><h4>Diagnostics</h4>${list(i.diagnostics)}</div>` : ""}
-        </div>`),
+        </div>`, "evaluation"),
       (i.advantages || i.limitations) ? section(num(), "Advantages &amp; limitations", `
         <div class="pro-con">
           ${i.advantages ? `<div class="info-block pros"><h4>Advantages</h4>${list(i.advantages)}</div>` : ""}
           ${i.limitations ? `<div class="info-block cons"><h4>Limitations</h4>${list(i.limitations.map((l) => typeof l === "string" ? l : `${l.name} - ${l.note}${l.fix ? ` <i>Fix: ${l.fix}</i>` : ""}`))}</div>` : ""}
         </div>
-        ${i.alternatives ? table(["Reach for instead", "When"], i.alternatives.map((a) => [a.name, a.when])) : ""}`) : "",
+        ${i.alternatives ? table(["Reach for instead", "When"], i.alternatives.map((a) => [a.name, a.when])) : ""}`, "proscons") : "",
       i.pitfalls ? section(num(), "Common pitfalls",
-        table(["Pitfall", "Solution"], i.pitfalls.map((p) => [p.problem, p.solution]))) : "",
+        table(["Pitfall", "Solution"], i.pitfalls.map((p) => [p.problem, p.solution])), "pitfalls") : "",
       i.workedExample ? section(num(), "Worked example - by hand", `
         <div class="info-grid"><div class="info-block span2 worked-example">
           <p><b>${i.workedExample.setup}</b></p>
           <ol class="info-list">${i.workedExample.steps.map((s) => `<li>${s}</li>`).join("")}</ol>
           <p class="formula">${i.workedExample.result}</p>
-        </div></div>`) : "",
+        </div></div>`, "worked") : "",
       (i.quickRef || i.code) ? section(num(), "Quick reference", [
         i.quickRef ? table(["Component", "Formula"], i.quickRef.map((q) => [q.name, `<span class="inline-formula">${q.formula}</span>`])) : "",
         codeBlock(i.code),
-      ].join("")) : "",
-      i.whyChain ? section(num(), "Why-chain - interview drill", whyChain(i.whyChain)) : "",
+      ].join(""), "quickref") : "",
+      i.whyChain ? section(num(), "Why-chain - interview drill", whyChain(i.whyChain), "whychain") : "",
     ].join("");
 
     if (i.decisionFunction.plot) MLU.plotFn(container.querySelector("#plot-decision"), i.decisionFunction.plot);
@@ -379,31 +407,217 @@ const MLApp = (() => {
   }
 
   // ---- header search --------------------------------------------------------
-  // Matches name, tagline, category and description; results are grouped-free
-  // and keyboard navigable so the box works without touching the mouse.
-  function searchRegistry(query) {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    const scored = [];
-    for (const a of registry) {
-      const name = a.name.toLowerCase();
-      const hay = `${name} ${a.tagline} ${a.category} ${a.description}`.toLowerCase();
-      if (!hay.includes(q)) continue;
-      // Rank exact prefix matches on the name above incidental body matches.
-      const score = name.startsWith(q) ? 0 : name.includes(q) ? 1 : 2;
-      scored.push({ algo: a, score });
+  // Two kinds of hit: the algorithm itself (name/tagline/category), and any
+  // passage inside its reference page, so a concept or interview question can be
+  // found without knowing which model it belongs to.
+
+  // Where each indexed passage lives, mapped to the section slug it scrolls to.
+  const SECTIONS = {
+    concept:        { label: "Core concept",    slug: "concept" },
+    math:           { label: "Mathematics",     slug: "math" },
+    loss:           { label: "Loss & optim.",   slug: "loss" },
+    assumptions:    { label: "Assumptions",     slug: "assumptions" },
+    regularization: { label: "Regularization",  slug: "regularization" },
+    hyperparameters:{ label: "Hyperparameters", slug: "hyperparameters" },
+    evaluation:     { label: "Evaluation",      slug: "evaluation" },
+    proscons:       { label: "Pros & cons",     slug: "proscons" },
+    pitfalls:       { label: "Pitfalls",        slug: "pitfalls" },
+    worked:         { label: "Worked example",  slug: "worked" },
+    quickref:       { label: "Quick reference", slug: "quickref" },
+    whychain:       { label: "Interview Q",     slug: "whychain" },
+  };
+
+  const strip = (s) => String(s).replace(/<[^>]*>/g, "");
+
+  // Flattens one algorithm's info into { section, text } passages. Built once,
+  // lazily, because every algorithm file must have registered first.
+  function buildEntries(a) {
+    const i = a.info || {};
+    const out = [];
+    const push = (sec, text) => { if (text) out.push({ section: sec, text: strip(text) }); };
+    const pushAll = (sec, arr, fn) => (arr || []).forEach((x) => push(sec, fn(x)));
+
+    if (i.intuition) {
+      push("concept", i.intuition.definition);
+      pushAll("concept", i.intuition.steps, (s) => s);
+      pushAll("concept", i.intuition.applications, (s) => s);
     }
-    return scored.sort((x, y) => x.score - y.score || x.algo.name.localeCompare(y.algo.name))
-                 .slice(0, 8)
-                 .map((s) => s.algo);
+    push("concept", i.type); push("concept", i.scenario);
+    push("concept", i.inputs); push("concept", i.output);
+
+    pushAll("math", i.math, (m) => `${m.title}: ${m.formula || ""} ${m.note || ""}`);
+    pushAll("math", i.pipeline, (p) => `${p.label} ${p.note || ""}`);
+    if (i.decisionFunction) push("math", `${i.decisionFunction.text} ${i.decisionFunction.mechanism}`);
+    if (i.lossFunction) push("loss", `${i.lossFunction.text} ${i.lossFunction.mechanism}`);
+    pushAll("loss", i.optimization, (o) => `${o.title}: ${o.formula || ""} ${o.note || ""}`);
+
+    pushAll("assumptions", i.assumptions, (x) => `${x.name}: ${x.why} ${x.check}`);
+    pushAll("regularization", i.regularization, (x) => `${x.name}: ${x.formula} ${x.note}`);
+    pushAll("hyperparameters", i.hyperparameters, (h) => `${h.name} (${h.range}): ${h.increasing} ${h.strategy}`);
+    pushAll("hyperparameters", i.parameters, (p) => `${p.name}: ${p.effect}`);
+
+    pushAll("evaluation", i.metrics, (s) => s);
+    pushAll("evaluation", i.typicalUses, (s) => s);
+    pushAll("evaluation", i.diagnostics, (s) => s);
+
+    pushAll("proscons", i.advantages, (s) => s);
+    pushAll("proscons", i.limitations, (l) => typeof l === "string" ? l : `${l.name}: ${l.note} ${l.fix || ""}`);
+    pushAll("proscons", i.alternatives, (x) => `${x.name}: ${x.when}`);
+
+    pushAll("pitfalls", i.pitfalls, (p) => `${p.problem} -> ${p.solution}`);
+    pushAll("quickref", i.quickRef, (q) => `${q.name}: ${q.formula}`);
+    push("quickref", i.code);
+
+    if (i.workedExample) {
+      push("worked", i.workedExample.setup);
+      pushAll("worked", i.workedExample.steps, (s) => s);
+    }
+    // Indexed as question and answer separately so a question-shaped query
+    // matches the question text directly.
+    (i.whyChain || []).forEach((qa) => { push("whychain", qa.q); push("whychain", `${qa.q} ${qa.a}`); });
+
+    return out;
   }
 
+  let searchIndex = null;
+  function getIndex() {
+    if (!searchIndex) {
+      searchIndex = registry.map((a) => ({ algo: a, entries: buildEntries(a) }));
+    }
+    return searchIndex;
+  }
+
+  // Dropped before matching so a typed-out question ("why does L1 produce
+  // sparse weights") is judged on its content words, not its grammar.
+  const STOPWORDS = new Set(["a","an","the","is","are","was","were","be","do","does","did","of","to","in","on","for","and","or","with","that","this","it","its","as","at","by","from","how","what","why","when","which","who","i","you","we","my","me","can","could","should","would","if","not","no","vs","versus"]);
+
+  function queryTerms(q) {
+    const raw = q.split(/\s+/).filter(Boolean);
+    const kept = raw.filter((t) => !STOPWORDS.has(t) && t.length > 1);
+    return kept.length ? kept : raw;   // an all-stopword query still searches
+  }
+
+  // How many of the terms appear in the text.
+  function termHits(text, terms) {
+    let n = 0;
+    for (const t of terms) if (text.includes(t)) n++;
+    return n;
+  }
+
+  // Rarity weight per term, so a distinctive word ("l1", "hessian") outranks a
+  // ubiquitous one ("sparse", "model") when results have to be relaxed.
+  function termWeights(terms) {
+    const idx = getIndex();
+    const w = new Map();
+    for (const t of terms) {
+      let df = 0;
+      for (const { algo, entries } of idx) {
+        const inAlgo = algo.name.toLowerCase().includes(t) || entries.some((e) => e.text.toLowerCase().includes(t));
+        if (inAlgo) df++;
+      }
+      w.set(t, 1 / Math.log(1 + Math.max(df, 1)));
+    }
+    return w;
+  }
+
+  function weightedScore(text, terms, weights) {
+    let s = 0;
+    for (const t of terms) if (text.includes(t)) s += weights.get(t) || 0;
+    return s;
+  }
+
+  // Returns [{ algo, score, hits: [{section, text}] }], best algorithm first.
+  // Long natural-language queries rarely match every word, so a majority is
+  // enough; if even that finds nothing, relax until something surfaces rather
+  // than dead-ending on a phrasing the notes happen to word differently.
+  function searchAll(query) {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const terms = queryTerms(q);
+    const strict = terms.length <= 2 ? terms.length : Math.ceil(terms.length * 0.6);
+    const weights = termWeights(terms);
+    for (let need = strict; need >= 1; need--) {
+      const found = searchPass(q, terms, need, weights);
+      if (found.length) return found;
+    }
+    return [];
+  }
+
+  function searchPass(q, terms, need, weights) {
+    const results = [];
+
+    for (const { algo, entries } of getIndex()) {
+      const name = algo.name.toLowerCase();
+      const meta = `${name} ${algo.tagline} ${algo.category} ${algo.description}`.toLowerCase();
+
+      // Algorithm-level relevance: a name prefix beats a name substring, which
+      // beats a mention anywhere in the summary text.
+      let score = 100;
+      if (name.startsWith(q)) score = 0;
+      else if (name.includes(q)) score = 1;
+      else if (termHits(meta, terms) === terms.length) score = 2;
+
+      // Content-level relevance: term coverage, weighted so rare terms dominate.
+      const scoredHits = [];
+      for (const e of entries) {
+        const low = e.text.toLowerCase();
+        const n = termHits(low, terms);
+        if (n < need) continue;
+        // Prefer a passage containing the query verbatim.
+        const exact = low.includes(q) ? 1 : 0;
+        scoredHits.push({ entry: e, n, exact, w: weightedScore(low, terms, weights) });
+      }
+      scoredHits.sort((x, y) => y.exact - x.exact || y.w - x.w || y.n - x.n);
+      const hits = scoredHits.slice(0, 4).map((h) => h.entry);
+      const best = scoredHits.length ? scoredHits[0].w : 0;
+
+      if (score === 100 && !hits.length) continue;
+      // An algorithm with content hits but no name match still ranks below
+      // direct name matches, and above nothing.
+      if (score === 100) score = 3;
+      results.push({ algo, score, hits, hitCount: hits.length, best });
+    }
+
+    return results
+      .sort((x, y) => x.score - y.score || y.best - x.best || y.hitCount - x.hitCount
+                      || x.algo.name.localeCompare(y.algo.name))
+      .slice(0, 6);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Marks every query term, so a multi-word query lights up each word it hit.
   function highlight(text, query) {
-    const q = query.trim();
-    if (!q) return text;
-    const i = text.toLowerCase().indexOf(q.toLowerCase());
-    if (i === -1) return text;
-    return `${text.slice(0, i)}<mark>${text.slice(i, i + q.length)}</mark>${text.slice(i + q.length)}`;
+    const safe = escapeHtml(text);
+    const terms = queryTerms(query.trim().toLowerCase())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)          // longest first, so nesting cannot occur
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    if (!terms.length) return safe;
+    return safe.replace(new RegExp(`(${terms.join("|")})`, "gi"), "<mark>$1</mark>");
+  }
+
+  // Trims a long passage to a window around the earliest matching term, so the
+  // reason the result matched is actually visible in the snippet.
+  function snippet(text, query, width = 130) {
+    const low = text.toLowerCase();
+    const q = query.trim().toLowerCase();
+    let i = low.indexOf(q);                          // whole phrase if present
+    if (i === -1) {
+      for (const t of queryTerms(q)) {
+        const at = low.indexOf(t);
+        if (at !== -1 && (i === -1 || at < i)) i = at;
+      }
+    }
+    if (i === -1) {
+      return highlight(text.slice(0, width) + (text.length > width ? "…" : ""), query);
+    }
+    const start = Math.max(0, i - Math.floor(width / 3));
+    const end = Math.min(text.length, start + width);
+    const cut = (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "");
+    return highlight(cut, query);
   }
 
   function initSearch() {
@@ -412,7 +626,9 @@ const MLApp = (() => {
     const panel = document.getElementById("search-results");
     if (!box || !input || !panel) return;
 
-    let matches = [];
+    // Flat list of selectable rows, in DOM order, so the arrow keys can walk
+    // across group boundaries. Each row is { algo, section? }.
+    let rows = [];
     let cursor = -1;
 
     function close() {
@@ -421,43 +637,69 @@ const MLApp = (() => {
       cursor = -1;
     }
 
-    function go(algo) {
-      if (!algo) return;
-      location.hash = "#/" + algo.id;
+    function go(row) {
+      if (!row) return;
+      pendingFocus = row.section || null;
+      const sameAlgo = active === row.algo.id;
+      location.hash = "#/" + row.algo.id;
+      // hashchange does not fire when the hash is unchanged, so re-route by hand.
+      if (sameAlgo) router();
       input.value = "";
       close();
       input.blur();
     }
 
     function paint() {
-      [...panel.children].forEach((el, i) => el.classList.toggle("active", i === cursor));
-      if (cursor >= 0 && panel.children[cursor]) {
-        panel.children[cursor].scrollIntoView({ block: "nearest" });
-      }
+      const els = panel.querySelectorAll(".search-item");
+      els.forEach((el, i) => el.classList.toggle("active", i === cursor));
+      if (cursor >= 0 && els[cursor]) els[cursor].scrollIntoView({ block: "nearest" });
     }
 
     function render() {
       const q = input.value;
-      matches = searchRegistry(q);
       cursor = -1;
-      if (!q.trim()) { close(); return; }
+      rows = [];
+      if (q.trim().length < 2) { close(); return; }
 
-      if (!matches.length) {
-        panel.innerHTML = `<div class="search-empty">No algorithm matches “${q}”</div>`;
+      const results = searchAll(q);
+
+      if (!results.length) {
+        panel.innerHTML = `<div class="search-empty">Nothing matches “${escapeHtml(q)}”</div>`;
       } else {
-        panel.innerHTML = matches.map((a) => {
-          const meta = CATEGORY_META[a.category] || { color: "var(--text)", icon: "" };
-          return `<div class="search-item" role="option" style="--cat-color:${meta.color}">
-            <span class="search-item-icon">${meta.icon}</span>
-            <span class="search-item-text">
-              <span class="search-item-name">${highlight(a.name, q)}</span>
-              <span class="search-item-meta">${a.category} · ${a.tagline}</span>
-            </span>
-          </div>`;
+        panel.innerHTML = results.map((r) => {
+          const meta = CATEGORY_META[r.algo.category] || { color: "var(--text)", icon: "" };
+          // The group header itself is a row: it opens the algorithm page.
+          rows.push({ algo: r.algo });
+          const head = `<div class="search-group-head">
+              <span class="search-item-icon">${meta.icon}</span>
+              <span class="search-group-name">${highlight(r.algo.name, q)}</span>
+              <span class="search-group-cat">${escapeHtml(r.algo.category)}</span>
+            </div>`;
+          const openRow = `<div class="search-item search-item-open" role="option">
+              <span class="search-badge">Open</span>
+              <span class="search-item-text"><span class="search-item-meta">${escapeHtml(r.algo.tagline)}</span></span>
+            </div>`;
+          const hitRows = r.hits.map((h) => {
+            rows.push({ algo: r.algo, section: SECTIONS[h.section].slug });
+            return `<div class="search-item" role="option">
+              <span class="search-badge">${SECTIONS[h.section].label}</span>
+              <span class="search-item-text"><span class="search-item-snippet">${snippet(h.text, q)}</span></span>
+            </div>`;
+          }).join("");
+          return `<div class="search-group" style="--cat-color:${meta.color}">${head}${openRow}${hitRows}</div>`;
         }).join("");
-        [...panel.children].forEach((el, i) => {
-          el.onmousedown = (e) => { e.preventDefault(); go(matches[i]); };
+
+        panel.querySelectorAll(".search-item").forEach((el, i) => {
+          el.onmousedown = (e) => { e.preventDefault(); go(rows[i]); };
           el.onmouseenter = () => { cursor = i; paint(); };
+        });
+        panel.querySelectorAll(".search-group-head").forEach((el) => {
+          el.onmousedown = (e) => {
+            e.preventDefault();
+            const g = el.parentElement;
+            const idx = [...panel.querySelectorAll(".search-item")].indexOf(g.querySelector(".search-item"));
+            go(rows[idx]);
+          };
         });
       }
       panel.hidden = false;
@@ -470,10 +712,10 @@ const MLApp = (() => {
 
     input.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { input.value = ""; close(); input.blur(); return; }
-      if (panel.hidden || !matches.length) return;
-      if (e.key === "ArrowDown") { e.preventDefault(); cursor = (cursor + 1) % matches.length; paint(); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); cursor = (cursor - 1 + matches.length) % matches.length; paint(); }
-      else if (e.key === "Enter") { e.preventDefault(); go(matches[cursor >= 0 ? cursor : 0]); }
+      if (panel.hidden || !rows.length) return;
+      if (e.key === "ArrowDown") { e.preventDefault(); cursor = (cursor + 1) % rows.length; paint(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); cursor = (cursor - 1 + rows.length) % rows.length; paint(); }
+      else if (e.key === "Enter") { e.preventDefault(); go(rows[cursor >= 0 ? cursor : 0]); }
     });
 
     // "/" focuses the box from anywhere, as long as you are not already typing.
@@ -502,5 +744,5 @@ const MLApp = (() => {
 
   // `registry` and `renderInfo` are exposed so the reference pages can be
   // rendered headlessly and checked for gaps without a browser.
-  return { register, init, registry, renderInfo };
+  return { register, init, registry, renderInfo, searchAll };
 })();

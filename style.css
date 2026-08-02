@@ -199,7 +199,7 @@ a { color: inherit; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: min(400px, 88vw);
+  width: min(520px, 92vw);
   max-height: 60vh;
   overflow-y: auto;
   background: var(--bg-raised);
@@ -252,6 +252,124 @@ a { color: inherit; }
   padding: 14px 12px;
   font-size: 13px;
   color: var(--text-faint);
+}
+
+/* grouped content results */
+.search-group {
+  border-top: 1px solid var(--border-soft);
+  padding: 5px 0 7px;
+}
+
+.search-group:first-child { border-top: none; }
+
+.search-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 5px;
+  cursor: pointer;
+}
+
+.search-group-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.search-group-cat {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-item {
+  align-items: flex-start;
+  padding: 6px 10px 6px 12px;
+  margin-left: 12px;
+  border-left: 2px solid var(--border-soft);
+  border-radius: 0 6px 6px 0;
+}
+
+.search-item.active {
+  background: color-mix(in srgb, var(--cat-color, var(--text)) 13%, transparent);
+  border-left-color: var(--cat-color, var(--text));
+}
+
+.search-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-top: 1px;
+  white-space: nowrap;
+  color: var(--cat-color, var(--text-dim));
+  background: color-mix(in srgb, var(--cat-color, var(--text)) 14%, transparent);
+}
+
+.search-item-open .search-badge {
+  color: var(--pastel-green);
+  background: var(--pastel-green-soft);
+}
+
+.search-item-snippet {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.search-item-snippet mark,
+.search-group-name mark {
+  background: color-mix(in srgb, var(--pastel-green) 38%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ---------- print button in the tab row ---------- */
+.print-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-bottom: 6px;
+  align-self: center;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.print-btn:hover {
+  color: var(--text);
+  border-color: var(--pastel-green);
+  background: var(--pastel-green-soft);
+}
+
+/* brief tint so you can see where a search result landed you */
+.ref-section.section-flash {
+  animation: section-flash 1.6s ease-out;
+  border-radius: 8px;
+}
+
+@keyframes section-flash {
+  0%, 40% { background: color-mix(in srgb, var(--pastel-green) 16%, transparent); }
+  100%    { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ref-section.section-flash { animation: none; }
 }
 
 .theme-toggle {

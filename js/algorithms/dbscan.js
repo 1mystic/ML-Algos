@@ -153,6 +153,37 @@
       type: "Unsupervised - Clustering. Density-based, does not require choosing the number of clusters in advance.",
       scenario: "Clusters have arbitrary (non-spherical) shapes, contain noise/outliers that shouldn't be forced into any cluster, or you don't want to pre-specify k - the classic limitation of K-Means this addresses.",
       inputs: "Unlabeled points, a neighborhood radius ε, and a minimum neighborhood size minPts.",
+      intuition: {
+        definition: "Clusters are <b>dense regions separated by sparse ones</b>. A point in a crowded neighbourhood is a core point; core points that are close together chain into a cluster of any shape; points in no dense region are labelled noise rather than forced into a cluster.",
+        steps: [
+          "Count how many points lie within ε of each point.",
+          "Points with at least minPts neighbours are core points.",
+          "Chain overlapping core neighbourhoods into clusters.",
+          "Anything never reached is noise, not a cluster member.",
+        ],
+        applications: [
+          "GPS and geospatial clustering, where density is literal",
+          "Outlier and fraud detection, since noise is a first-class output",
+          "Image segmentation of irregular regions",
+          "Grouping sensor readings with unknown group count",
+          "Any data with crescent, ring, or filament-shaped clusters",
+        ],
+      },
+      math: [
+        { title: "ε-neighbourhood", formula: "N_ε(x) = { q ∈ D : dist(x, q) ≤ ε }", note: "The set of points within radius ε, including x itself in the usual convention." },
+        { title: "Core point", formula: "x is core ⟺ |N_ε(x)| ≥ minPts", note: "The density test. Everything else in the algorithm is defined in terms of core points." },
+        { title: "Directly density-reachable", formula: "q is directly reachable from x ⟺ x is core and q ∈ N_ε(x)", note: "Note the asymmetry: a border point is reachable from a core point but not the reverse, because it cannot extend the cluster." },
+        { title: "Density-reachable", formula: "chain x = p₁, p₂, …, pₙ = q where each pᵢ₊₁ is directly reachable from pᵢ", note: "Transitive closure over core points. This chaining is what lets a cluster follow an arbitrarily curved shape." },
+        { title: "Density-connected", formula: "p and q are connected if some core o reaches both", note: "The symmetric relation that actually defines a cluster. A cluster is a maximal density-connected set." },
+        { title: "Point taxonomy", formula: "core: ≥ minPts neighbours | border: in a core's neighbourhood but not core | noise: neither", note: "Only three categories. Border points join whichever cluster reached them first, which is the algorithm's one order-dependent quirk." },
+      ],
+      pipeline: [
+        { label: "Pick unvisited x", note: "any order" },
+        { label: "Count N_ε(x)", note: "range query" },
+        { label: "Core?", note: "≥ minPts" },
+        { label: "Expand chain", note: "absorb reachable" },
+        { label: "Labels or noise", note: "k discovered", accent: "green" },
+      ],
       decisionFunction: {
         text: "cluster(x) = the group reached by chaining together overlapping ε-neighborhoods of core points; unreachable points → noise (label −1)",
         mechanism: "A point is a 'core point' if at least minPts points (including itself) lie within ε of it. Clusters grow by repeatedly absorbing any point within ε of an already-included core point ('density-reachability'); points that are never absorbed this way are labeled noise.",
@@ -162,7 +193,109 @@
         text: "No explicit objective is minimized - a direct, deterministic neighborhood-expansion procedure.",
         mechanism: "Like KNN, DBSCAN has no training loss; ε and minPts are instead chosen by inspecting the resulting clusters/noise ratio, or via a k-distance plot heuristic.",
       },
+      optimization: [
+        { title: "Cost", formula: "O(m²) naive, O(m log m) with a spatial index", note: "The whole algorithm is a sequence of range queries. A KD-tree or ball-tree makes each one logarithmic, but only while dimensionality stays low." },
+        { title: "Choosing ε from the data", formula: "sort the distance to each point's k-th nearest neighbour, look for the knee", note: "The k-distance plot with k = minPts. The elbow marks where points stop being in dense regions, which is a principled starting value for ε." },
+        { title: "Choosing minPts", formula: "minPts ≥ p + 1, commonly 2p", note: "Must exceed the dimensionality or almost everything looks dense. A value of 4 is the classic default for 2D data." },
+        { title: "Order dependence", formula: "border points join the first cluster that reaches them", note: "Core points and noise labels are fully deterministic; only border-point assignment can vary with scan order. In practice this affects very few points." },
+        { title: "HDBSCAN", formula: "vary ε continuously, extract the most stable clusters", note: "Removes the hardest hyperparameter by building a hierarchy over all ε values and selecting clusters that persist longest." },
+      ],
       output: "A cluster label (or noise, −1) for every point - the number of clusters is discovered automatically, not specified up front.",
+      assumptions: [
+        { name: "Clusters have similar density", why: "A single global ε cannot describe both a dense cluster and a sparse one. One will merge, the other will fragment.", check: "If the k-distance plot has several knees, use HDBSCAN or OPTICS instead." },
+        { name: "Clusters are separated by sparse regions", why: "The definition of a cluster boundary is a drop in density. Touching clusters of equal density will merge.", check: "Inspect whether the merged clusters have a genuine density gap." },
+        { name: "Features are scaled", why: "ε is a single radius applied across all dimensions.", check: "Standardize before clustering. ε is meaningless otherwise." },
+        { name: "Low to moderate dimensionality", why: "Distance concentration makes all neighbourhoods look alike, and spatial indexes degrade to linear scans.", check: "Above roughly 10 to 20 features, reduce with PCA or UMAP first." },
+        { name: "Meaningful distance metric", why: "Density is defined entirely through the metric.", check: "Use cosine for text embeddings, haversine for geographic coordinates." },
+      ],
+      hyperparameters: [
+        { name: "ε (eps)", range: "data-dependent", increasing: "Neighbourhoods grow, clusters merge, noise shrinks. Too large and everything becomes one cluster.", strategy: "Read it off the knee of the k-distance plot with k = minPts. This is the parameter that matters most and it cannot be guessed." },
+        { name: "minPts", range: "3 - 50", increasing: "Denser regions required, more points labelled noise, more robust to spurious clusters.", strategy: "Start at 2·p for p-dimensional data, minimum p+1. Raise it if you get many small dubious clusters." },
+        { name: "metric", range: "euclidean / manhattan / cosine / haversine", increasing: "Not applicable", strategy: "Match the data. Haversine for lat/long, cosine for embeddings." },
+        { name: "algorithm", range: "auto / kd_tree / ball_tree / brute", increasing: "Not applicable", strategy: "Leave on auto. It falls back to brute force in high dimensions, which is correct." },
+        { name: "min_samples (sklearn)", range: "same as minPts", increasing: "Same effect as minPts.", strategy: "Note that sklearn counts the point itself, so the semantics match the classic definition." },
+      ],
+      metrics: ["Silhouette score (computed excluding noise)", "Number of clusters found", "Noise ratio", "Adjusted Rand Index (when ground truth exists)"],
+      typicalUses: ["Geospatial/GPS clustering", "Anomaly/outlier detection (the noise points ARE the anomalies)", "Clusters of arbitrary, non-convex shape", "Image segmentation"],
+      diagnostics: [
+        "Always plot the k-distance curve before choosing ε. Guessing wastes far more time than the plot costs.",
+        "Track the noise ratio. Above roughly 30% usually means ε is too small; near 0% often means it is too large.",
+        "If you get one giant cluster plus a few tiny ones, ε has bridged genuinely separate groups.",
+        "Compute silhouette on non-noise points only. Including noise makes the score meaningless.",
+        "If results vary noticeably between runs, that is border-point order dependence, which is expected and usually harmless.",
+      ],
+      advantages: [
+        "The number of clusters is discovered rather than specified.",
+        "Finds arbitrarily shaped clusters, including rings and crescents that centroid methods cannot represent.",
+        "Outliers are an explicit output rather than being forced into a cluster.",
+        "Robust to outliers by construction, since noise never influences cluster shape.",
+        "Only two hyperparameters, and one of them can be read off a plot.",
+        "Core-point and noise labels are deterministic regardless of scan order.",
+      ],
+      limitations: [
+        { name: "Cannot handle varying density", note: "one global ε cannot fit both dense and sparse clusters", fix: "HDBSCAN or OPTICS." },
+        { name: "Very sensitive to ε", note: "small changes flip between one cluster and all noise", fix: "choose it from the k-distance knee rather than by trial and error." },
+        { name: "Struggles in high dimensions", note: "distance concentration destroys the density signal", fix: "PCA or UMAP before clustering." },
+        { name: "Border points are order-dependent", note: "they join whichever cluster reaches them first", fix: "usually negligible; DBSCAN* excludes border points entirely." },
+        { name: "No predict for new points", note: "clusters are defined by the training data's density", fix: "fit a classifier on the labels, or use HDBSCAN's approximate_predict." },
+        { name: "Requires scaling", note: "ε is a single radius across all features", fix: "standardize first." },
+      ],
+      alternatives: [
+        { name: "HDBSCAN", when: "Cluster densities vary, or you want to avoid choosing ε entirely. Usually the better default today." },
+        { name: "OPTICS", when: "You want an ordering that reveals structure across all density levels." },
+        { name: "K-means", when: "Clusters are spherical, similarly sized, and k is known. Far faster at scale." },
+        { name: "Spectral clustering", when: "Clusters are connected and non-convex but density is uniform." },
+      ],
+      pitfalls: [
+        { problem: "Everything is labelled noise", solution: "ε is too small or minPts too large. Check the k-distance plot." },
+        { problem: "Everything is one cluster", solution: "ε is too large and has bridged the gaps. Reduce it." },
+        { problem: "Results are nonsense despite reasonable ε", solution: "Features are unscaled, so ε means different things per dimension. Standardize." },
+        { problem: "Dense clusters found, sparse ones lost", solution: "Inherent to a single global ε. Move to HDBSCAN." },
+        { problem: "Very slow on a large dataset", solution: "The spatial index has degraded. Reduce dimensionality, or sample." },
+        { problem: "No predict method available", solution: "DBSCAN is transductive. Train a classifier on its labels to score new points." },
+      ],
+      quickRef: [
+        { name: "Neighbourhood", formula: "N_ε(x) = {q : d(x,q) ≤ ε}" },
+        { name: "Core point", formula: "|N_ε(x)| ≥ minPts" },
+        { name: "Border point", formula: "non-core, but in some core's N_ε" },
+        { name: "Noise", formula: "neither core nor border, label −1" },
+        { name: "Cluster", formula: "maximal density-connected set" },
+        { name: "minPts rule", formula: "≥ p+1, typically 2p" },
+        { name: "ε heuristic", formula: "knee of the k-distance plot" },
+        { name: "Cost", formula: "O(m log m) with an index" },
+      ],
+      code: `import numpy as np
+from sklearn.cluster import DBSCAN
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import StandardScaler
+
+Xs = StandardScaler().fit_transform(X)   # eps is meaningless unscaled
+min_pts = 2 * Xs.shape[1]                # rule of thumb: 2 x dimensions
+
+# Read eps off the knee of the sorted k-distance curve rather than guessing.
+dists, _ = NearestNeighbors(n_neighbors=min_pts).fit(Xs).kneighbors(Xs)
+k_dist = np.sort(dists[:, -1])
+# plt.plot(k_dist)  -> the elbow y-value is your eps
+
+db = DBSCAN(eps=0.5, min_samples=min_pts).fit(Xs)
+labels = db.labels_
+
+n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+noise_ratio = (labels == -1).mean()
+print(n_clusters, round(noise_ratio, 3))
+
+# Varying density? HDBSCAN removes the eps choice entirely.
+# import hdbscan; hdbscan.HDBSCAN(min_cluster_size=15).fit_predict(Xs)`,
+      whyChain: [
+        { q: "What is DBSCAN's main advantage over k-means?", a: "Two things. It discovers the number of clusters instead of requiring it, and it can find clusters of any shape because clusters are defined by density connectivity rather than distance to a centre. It also isolates outliers instead of assigning them." },
+        { q: "What is the difference between a core and a border point?", a: "A core point has at least minPts neighbours within ε and can extend a cluster. A border point is inside some core point's neighbourhood but is not itself dense enough, so it joins the cluster but cannot grow it further. That asymmetry is what stops clusters leaking through sparse regions." },
+        { q: "Why is DBSCAN unable to handle varying density?", a: "ε and minPts together define one absolute density threshold applied everywhere. If you set it for the sparse cluster, the dense clusters merge; if you set it for the dense ones, the sparse cluster becomes noise. There is no single value that works for both." },
+        { q: "How do you actually choose ε?", a: "Compute each point's distance to its minPts-th nearest neighbour, sort those distances, and plot them. Points inside clusters have small values and noise has large ones, so the curve has a knee. The y-value at the knee is a well-motivated ε." },
+        { q: "Why must minPts exceed the number of dimensions?", a: "In p dimensions you need at least p+1 points to define a volume. With fewer, neighbourhoods are degenerate and nearly every point qualifies as core, so the density test stops discriminating." },
+        { q: "Is DBSCAN deterministic?", a: "Core points and noise are fully deterministic. Only border points can vary, because they join whichever cluster reaches them first, and that depends on scan order. The variation is usually confined to a handful of points." },
+        { q: "Why does DBSCAN break down in high dimensions?", a: "Distances concentrate, so every point's ε-neighbourhood contains roughly the same count and the density contrast that the algorithm relies on disappears. Spatial indexes also stop helping, pushing you back to O(m²)." },
+        { q: "Why is there no predict method?", a: "A cluster is defined as a density-connected region of the training data. A new point has no defined membership without recomputing connectivity. HDBSCAN offers an approximate_predict; otherwise train a classifier on the cluster labels." },
+      ],
       parameters: [
         { name: "ε (eps)", effect: "Neighborhood radius. Too small → almost everything is noise. Too large → distinct clusters merge into one." },
         { name: "minPts", effect: "Minimum neighborhood size to count as a core point. Higher values demand denser regions and are more robust to noise, but can miss small real clusters." },

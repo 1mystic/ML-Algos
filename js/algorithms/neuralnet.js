@@ -159,6 +159,38 @@
       type: "Supervised - Classification/Regression. Parametric, non-linear (feed-forward multilayer perceptron).",
       scenario: "The true decision boundary is complex/non-linear and enough data exists to fit many parameters - the general-purpose workhorse of modern ML.",
       inputs: "A feature vector x (2D points with binary labels in this demo).",
+      intuition: {
+        definition: "Stack linear transforms and non-linear activations. Each layer <b>re-represents</b> its input, so later layers work with features the earlier ones invented. Remove the non-linearities and the whole stack collapses back into a single linear model.",
+        steps: [
+          "Multiply by a weight matrix and add a bias.",
+          "Apply a non-linear activation such as ReLU.",
+          "Repeat for each layer, ending in the output shape you need.",
+          "Backpropagate the loss gradient and update every weight.",
+        ],
+        applications: [
+          "Image, speech, and text classification",
+          "Function approximation where the form is unknown",
+          "Recommendation and embedding models",
+          "Tabular deep learning, though boosting often still wins there",
+          "Any problem with abundant data and non-linear structure",
+        ],
+      },
+      math: [
+        { title: "Layer forward pass", formula: "z⁽ˡ⁾ = W⁽ˡ⁾a⁽ˡ⁻¹⁾ + b⁽ˡ⁾,   a⁽ˡ⁾ = g(z⁽ˡ⁾)", note: "a⁽⁰⁾ is the input. Each layer is an affine map followed by an elementwise non-linearity." },
+        { title: "Why non-linearity is essential", formula: "W₂(W₁x) = (W₂W₁)x = Wx", note: "Composing linear maps yields another linear map. Without g, a hundred layers have exactly the expressive power of one, and XOR remains unsolvable." },
+        { title: "Common activations", formula: "ReLU: max(0,z)   tanh: (e^z−e^−z)/(e^z+e^−z)   sigmoid: 1/(1+e^−z)", note: "ReLU is the default: its gradient is 1 for positive inputs, so it does not saturate. Tanh and sigmoid squash into a bounded range and flatten at the extremes." },
+        { title: "Output layer and loss", formula: "binary: σ(z) + BCE    multi-class: softmax(z) + cross-entropy    regression: identity + MSE", note: "The activation and loss are chosen as a pair so the output gradient simplifies to the clean form (ŷ − y)." },
+        { title: "Backpropagation", formula: "δ⁽ᴸ⁾ = ∇_a L ⊙ g'(z⁽ᴸ⁾),   δ⁽ˡ⁾ = (W⁽ˡ⁺¹⁾ᵀδ⁽ˡ⁺¹⁾) ⊙ g'(z⁽ˡ⁾)", note: "The chain rule applied layer by layer, reusing each layer's intermediate result. This is what makes computing millions of gradients affordable." },
+        { title: "Weight gradients", formula: "∂L/∂W⁽ˡ⁾ = δ⁽ˡ⁾·(a⁽ˡ⁻¹⁾)ᵀ,   ∂L/∂b⁽ˡ⁾ = δ⁽ˡ⁾", note: "An outer product of the incoming activation and the outgoing error signal. Same shape as the weight matrix, as it must be." },
+        { title: "Universal approximation", formula: "one hidden layer of sufficient width approximates any continuous function on a compact set", note: "An existence result only. It says nothing about how wide, whether gradient descent will find it, or how much data is needed." },
+      ],
+      pipeline: [
+        { label: "Input x", note: "feature vector" },
+        { label: "Linear Wx+b", note: "affine map" },
+        { label: "Activation", note: "ReLU / tanh" },
+        { label: "Repeat layers", note: "deeper features" },
+        { label: "Output + loss", note: "backprop, update", accent: "green" },
+      ],
       decisionFunction: {
         text: "ŷ = σ( W_L · act( … act(W₁x + b₁) … ) + b_L )",
         mechanism: "Input passes through alternating linear transforms and non-linear activations layer by layer; each hidden layer carves out more complex regions of input space than a single linear/logistic model could (e.g. it can solve XOR).",

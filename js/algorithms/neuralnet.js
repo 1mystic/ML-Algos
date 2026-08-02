@@ -37,7 +37,7 @@
           <div class="control-card">
             <h3>training</h3>
             <div class="readout" id="nn-readout">–</div>
-            <div class="note">Feed-forward MLP with backprop via TensorFlow.js autodiff (Adam + binary cross-entropy) — the same architecture family as <code>mla/neuralnet</code>, trained continuously in the browser. Changing the architecture rebuilds the network.</div>
+            <div class="note">Feed-forward MLP with backprop via TensorFlow.js autodiff (Adam + binary cross-entropy) - the same architecture family as <code>mla/neuralnet</code>, trained continuously in the browser. Changing the architecture rebuilds the network.</div>
           </div>
         </div>
       </div>
@@ -156,13 +156,13 @@
     description: "A configurable feed-forward network trained live in your browser with TensorFlow.js. Try XOR or circular data with a linear-only setup (0 units in layer 2, relu off) to see why depth matters.",
     sourceFile: "mla/neuralnet",
     info: {
-      type: "Supervised — Classification/Regression. Parametric, non-linear (feed-forward multilayer perceptron).",
-      scenario: "The true decision boundary is complex/non-linear and enough data exists to fit many parameters — the general-purpose workhorse of modern ML.",
+      type: "Supervised - Classification/Regression. Parametric, non-linear (feed-forward multilayer perceptron).",
+      scenario: "The true decision boundary is complex/non-linear and enough data exists to fit many parameters - the general-purpose workhorse of modern ML.",
       inputs: "A feature vector x (2D points with binary labels in this demo).",
       decisionFunction: {
         text: "ŷ = σ( W_L · act( … act(W₁x + b₁) … ) + b_L )",
         mechanism: "Input passes through alternating linear transforms and non-linear activations layer by layer; each hidden layer carves out more complex regions of input space than a single linear/logistic model could (e.g. it can solve XOR).",
-        plot: { fn: (x) => Math.max(0, x), domain: [-4, 4], color: "var(--accent)", fn2: (x) => Math.tanh(x), color2: "var(--series-4)", caption: "the two activations available here — ReLU (solid, piecewise-linear) vs tanh (dashed, saturates smoothly at ±1)" },
+        plot: { fn: (x) => Math.max(0, x), domain: [-4, 4], color: "var(--accent)", fn2: (x) => Math.tanh(x), color2: "var(--series-4)", caption: "the two activations available here - ReLU (solid, piecewise-linear) vs tanh (dashed, saturates smoothly at ±1)" },
       },
       lossFunction: {
         text: "L = −Σᵢ[yᵢ·log(ŷᵢ) + (1−yᵢ)·log(1−ŷᵢ)]",
@@ -171,7 +171,7 @@
       output: "A predicted class probability (or a continuous value, for a regression output layer).",
       parameters: [
         { name: "hidden units / layers", effect: "Model capacity. More units/layers fit more complex functions but train slower and risk overfitting on small data." },
-        { name: "activation", effect: "ReLU vs tanh — affects gradient flow and how easily units saturate." },
+        { name: "activation", effect: "ReLU vs tanh - affects gradient flow and how easily units saturate." },
         { name: "learning rate", effect: "Adam's step size. Too high destabilizes training; too low trains very slowly." },
         { name: "epochs", effect: "How long to train. Watch validation loss to catch overfitting." },
       ],
@@ -186,7 +186,7 @@
           "Output ŷ = σ(0.2) = 1/(1+e⁻⁰·²) = 1/1.819 ≈ 0.550.",
           "Loss = −log(ŷ) = −log(0.550) ≈ 0.598 (since true label is 1).",
         ],
-        result: "Forward pass output ŷ ≈ 0.550, cross-entropy loss ≈ 0.598 — backprop would now push weights to raise ŷ toward 1",
+        result: "Forward pass output ŷ ≈ 0.550, cross-entropy loss ≈ 0.598 - backprop would now push weights to raise ŷ toward 1",
       },
     },
     mount,

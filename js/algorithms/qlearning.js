@@ -42,7 +42,7 @@
           <div class="control-card">
             <h3>state</h3>
             <div class="readout" id="ql-readout">–</div>
-            <div class="note">Tabular Q-learning: Q(s,a) += &alpha;(r + &gamma;&middot;max<sub>a'</sub>Q(s',a') − Q(s,a)), with an &epsilon;-greedy behavior policy — the update rule behind <code>mla/rl/dqn.py</code>'s deep variant, done here with an exact table since the state space is small.</div>
+            <div class="note">Tabular Q-learning: Q(s,a) += &alpha;(r + &gamma;&middot;max<sub>a'</sub>Q(s',a') − Q(s,a)), with an &epsilon;-greedy behavior policy - the update rule behind <code>mla/rl/dqn.py</code>'s deep variant, done here with an exact table since the state space is small.</div>
           </div>
         </div>
       </div>
@@ -205,32 +205,32 @@
     description: "An agent learns a value for every (state, action) pair purely from trial and error and a delayed reward, via the Q-learning temporal-difference update. Paint walls, a goal, and a pit, then train and watch it find the route.",
     sourceFile: "mla/rl/dqn.py",
     info: {
-      type: "Reinforcement Learning — value-based, model-free, off-policy, tabular temporal-difference control.",
+      type: "Reinforcement Learning - value-based, model-free, off-policy, tabular temporal-difference control.",
       scenario: "Sequential decision-making where an agent must learn purely from trial-and-error reward signals (not labeled examples) which actions lead to good long-term outcomes under delayed rewards.",
-      inputs: "The environment's current state s, the set of possible actions, and a reward r received after each action — no labeled 'correct action' is ever given.",
+      inputs: "The environment's current state s, the set of possible actions, and a reward r received after each action - no labeled 'correct action' is ever given.",
       decisionFunction: {
         text: "π(s) = argmax_a Q(s,a)",
         mechanism: "The agent keeps a table of estimated long-term value for every (state, action) pair; once trained, it simply acts on the highest-value action in the current state. During training it uses ε-greedy (mostly greedy, occasionally random) to keep exploring.",
       },
       lossFunction: {
         text: "δ = r + γ·max_{a'} Q(s',a') − Q(s,a);   Q(s,a) ← Q(s,a) + α·δ",
-        mechanism: "Not a loss in the supervised sense — the temporal-difference error δ is used directly as the update. It bootstraps off the agent's own current value estimates rather than a ground-truth label, driving Q(s,a) toward consistency with the Bellman optimality equation.",
+        mechanism: "Not a loss in the supervised sense - the temporal-difference error δ is used directly as the update. It bootstraps off the agent's own current value estimates rather than a ground-truth label, driving Q(s,a) toward consistency with the Bellman optimality equation.",
       },
       output: "A value Q(s,a) for every state-action pair, and the greedy policy it induces (the best action in every state).",
       parameters: [
         { name: "α (learning rate)", effect: "How much each new experience overwrites the old value estimate. Higher = faster but noisier learning." },
         { name: "γ (discount factor)", effect: "How much future reward matters relative to immediate reward. Near 1 = far-sighted; near 0 = short-sighted." },
-        { name: "ε (exploration rate)", effect: "Probability of a random action instead of the current best-known one — balances exploring the environment vs exploiting what's already learned." },
+        { name: "ε (exploration rate)", effect: "Probability of a random action instead of the current best-known one - balances exploring the environment vs exploiting what's already learned." },
       ],
       metrics: ["Cumulative episode reward", "Steps to reach the goal", "Change in Q-table between episodes (convergence)"],
-      typicalUses: ["Game-playing agents", "Robotics control", "Resource allocation / scheduling", "Any simulate-able sequential decision problem — the tabular ancestor of Deep Q-Networks (DQN)"],
+      typicalUses: ["Game-playing agents", "Robotics control", "Resource allocation / scheduling", "Any simulate-able sequential decision problem - the tabular ancestor of Deep Q-Networks (DQN)"],
       workedExample: {
         setup: "Q(s,a)=0 initially. Taking action a in state s gives reward r=−1 and lands in s′, where max_a′Q(s′,·)=5. α=0.5, γ=0.9.",
         steps: [
           "TD error δ = r + γ×max_a′Q(s′,·) − Q(s,a) = −1 + 0.9×5 − 0 = −1 + 4.5 = 3.5.",
           "Update: Q(s,a) ← Q(s,a) + α×δ = 0 + 0.5×3.5 = 1.75.",
         ],
-        result: "Q(s,a) updates from 0 to 1.75 — even though the immediate reward was negative, the high value already learned at s′ propagates back and makes this action look good",
+        result: "Q(s,a) updates from 0 to 1.75 - even though the immediate reward was negative, the high value already learned at s′ propagates back and makes this action look good",
       },
     },
     mount,

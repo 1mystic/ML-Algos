@@ -69,7 +69,7 @@
             </div>
           </div>
           <svg id="tsne-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">source data is 4 gaussian clusters in 5D — colors show the true (hidden-from-the-algorithm) cluster</div>
+          <div class="stage-hint">source data is 4 gaussian clusters in 5D - colors show the true (hidden-from-the-algorithm) cluster</div>
         </div>
         <div class="controls">
           <div class="control-card">
@@ -79,7 +79,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="tsne-readout">–</div>
-            <div class="note">Full (non-Barnes-Hut) t-SNE: high-D affinities P come from a per-point Gaussian kernel calibrated to the target perplexity via binary search; low-D affinities Q use a Student-t kernel; gradient descent with momentum minimizes KL(P‖Q) — the same objective as <code>mla/tsne.py</code>.</div>
+            <div class="note">Full (non-Barnes-Hut) t-SNE: high-D affinities P come from a per-point Gaussian kernel calibrated to the target perplexity via binary search; low-D affinities Q use a Student-t kernel; gradient descent with momentum minimizes KL(P‖Q) - the same objective as <code>mla/tsne.py</code>.</div>
           </div>
         </div>
       </div>
@@ -170,29 +170,29 @@
   MLApp.register({
     id: "tsne",
     name: "t-SNE",
-    category: "Unsupervised — Dimensionality Reduction",
+    category: "Unsupervised - Dimensionality Reduction",
     tagline: "high-D neighborhoods → 2D map",
     description: "Embeds 5-dimensional clustered data into 2D by matching high-dimensional neighbor probabilities to a low-dimensional Student-t distribution via gradient descent. Step through iterations to watch clusters separate.",
     sourceFile: "mla/tsne.py",
     info: {
-      type: "Unsupervised — Non-linear dimensionality reduction, visualization-focused (no out-of-sample mapping).",
+      type: "Unsupervised - Non-linear dimensionality reduction, visualization-focused (no out-of-sample mapping).",
       scenario: "Visualizing high-dimensional data (embeddings, gene expression, learned features) in 2D/3D so that clusters close in high-D stay close in the 2D map.",
-      inputs: "A set of high-dimensional points — unsupervised; labels, if any, are only used afterward to color the plot.",
+      inputs: "A set of high-dimensional points - unsupervised; labels, if any, are only used afterward to color the plot.",
       decisionFunction: {
         text: "yᵢ is found by gradient descent, not computed by a formula, so that low-D neighbor probabilities Q match high-D neighbor probabilities P",
-        mechanism: "High-D neighbor probability Pᵢⱼ uses a Gaussian kernel calibrated per-point to a target perplexity; low-D probability Qᵢⱼ uses a heavier-tailed Student-t kernel — the heavy tail is what lets moderately-distant 2D points still represent moderately-similar high-D points without everything collapsing into one blob.",
+        mechanism: "High-D neighbor probability Pᵢⱼ uses a Gaussian kernel calibrated per-point to a target perplexity; low-D probability Qᵢⱼ uses a heavier-tailed Student-t kernel - the heavy tail is what lets moderately-distant 2D points still represent moderately-similar high-D points without everything collapsing into one blob.",
       },
       lossFunction: {
         text: "KL(P‖Q) = Σᵢⱼ Pᵢⱼ·log(Pᵢⱼ/Qᵢⱼ)",
         mechanism: "Minimized by gradient descent with momentum directly on the 2D coordinates: points that should be neighbors (high P) but currently aren't (low Q) get pulled together; points that shouldn't be neighbors get pushed apart.",
       },
-      output: "A 2D (or 3D) coordinate for every input point, suitable for a scatter plot — not a reusable function for new points.",
+      output: "A 2D (or 3D) coordinate for every input point, suitable for a scatter plot - not a reusable function for new points.",
       parameters: [
         { name: "perplexity", effect: "Roughly 'how many neighbors' each point's Gaussian considers. Small → emphasizes very local structure; large → considers broader neighborhoods." },
         { name: "iterations", effect: "More iterations refine the layout further, with diminishing returns after clusters separate." },
         { name: "learning rate / momentum", effect: "Affect how quickly and how distinctly clusters separate early in training." },
       ],
-      metrics: ["No single 'accuracy' — trustworthiness / continuity scores", "Qualitative check: do known clusters/classes separate in the map?"],
+      metrics: ["No single 'accuracy' - trustworthiness / continuity scores", "Qualitative check: do known clusters/classes separate in the map?"],
       typicalUses: ["Visualizing word/sentence embeddings", "Single-cell genomics cluster visualization", "Inspecting a neural network's learned feature space", "Exploratory cluster discovery"],
       workedExample: {
         setup: "3 points in 1D: x=0, x=1, x=5. Compute p_{j|0} (neighbor probability of points 1 and 2, given point 0) with β=1/(2σ²)=0.5.",
@@ -202,7 +202,7 @@
           "Sum = 0.6065 + 0.0000037 ≈ 0.60651.",
           "p_{1|0} = 0.6065/0.60651 ≈ 0.99994. p_{2|0} = 0.0000037/0.60651 ≈ 0.0000061.",
         ],
-        result: "Point 1 (close) gets ~99.99% of point 0's neighbor probability mass; point 2 (far) gets essentially none — exactly the local-neighborhood emphasis t-SNE is built on",
+        result: "Point 1 (close) gets ~99.99% of point 0's neighbor probability mass; point 2 (far) gets essentially none - exactly the local-neighborhood emphasis t-SNE is built on",
       },
     },
     mount,

@@ -50,7 +50,7 @@
             <div class="hscroll"><table id="fm-table" style="border-collapse:collapse;font-size:12px"></table></div>
           </div>
           <div style="padding:8px 4px;flex:1">
-            <div class="stage-hint" style="margin-bottom:6px">learned latent space (each user/item is a 2D vector v — dot products of nearby vectors drive high predicted ratings)</div>
+            <div class="stage-hint" style="margin-bottom:6px">learned latent space (each user/item is a 2D vector v - dot products of nearby vectors drive high predicted ratings)</div>
             <svg id="fm-latent" viewBox="0 0 ${W2} ${H2}" style="width:100%;height:${H2}px"></svg>
           </div>
         </div>
@@ -69,7 +69,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="fm-readout">–</div>
-            <div class="note">Factorization Machine with only user/item one-hot features reduces to biased matrix factorization: prediction = w<sub>0</sub> + w<sub>u</sub> + w<sub>i</sub> + &lang;v<sub>u</sub>,v<sub>i</sub>&rang;, trained by SGD — the pairwise-interaction term from <code>mla/fm.py</code>, here with a 2D latent space so it's directly plottable.</div>
+            <div class="note">Factorization Machine with only user/item one-hot features reduces to biased matrix factorization: prediction = w<sub>0</sub> + w<sub>u</sub> + w<sub>i</sub> + &lang;v<sub>u</sub>,v<sub>i</sub>&rang;, trained by SGD - the pairwise-interaction term from <code>mla/fm.py</code>, here with a 2D latent space so it's directly plottable.</div>
           </div>
         </div>
       </div>
@@ -162,23 +162,23 @@
   MLApp.register({
     id: "factorization-machines",
     name: "Factorization Machines",
-    category: "Supervised — Regression",
+    category: "Supervised - Regression",
     tagline: "latent-vector pairwise interactions",
     description: "Predicts ratings in a sparse user×item matrix by learning a low-rank latent vector per user and item, so unseen pairs get a prediction from the dot product of their vectors. Edit the matrix and retrain to see the latent space reorganize.",
     sourceFile: "mla/fm.py",
     info: {
-      type: "Supervised — Regression/ranking. Factorized second-order feature-interaction model.",
-      scenario: "Sparse, high-cardinality categorical data (user IDs × item IDs, ad click prediction with many categorical fields) where you want pairwise feature interactions without an explosion of parameters — a generalization of matrix factorization.",
-      inputs: "A (typically sparse, one-hot-encoded) feature vector x — here a user indicator and an item indicator — and a target rating.",
+      type: "Supervised - Regression/ranking. Factorized second-order feature-interaction model.",
+      scenario: "Sparse, high-cardinality categorical data (user IDs × item IDs, ad click prediction with many categorical fields) where you want pairwise feature interactions without an explosion of parameters - a generalization of matrix factorization.",
+      inputs: "A (typically sparse, one-hot-encoded) feature vector x - here a user indicator and an item indicator - and a target rating.",
       decisionFunction: {
         text: "ŷ(x) = w₀ + Σᵢ wᵢxᵢ + Σ_{i<j} ⟨vᵢ,vⱼ⟩xᵢxⱼ",
-        mechanism: "Instead of a separate weight per feature pair (O(n²) parameters, most never observed), each feature gets a small latent vector v; the interaction weight for any pair is just the dot product of their vectors — so interactions generalize even to feature pairs never co-observed in training.",
+        mechanism: "Instead of a separate weight per feature pair (O(n²) parameters, most never observed), each feature gets a small latent vector v; the interaction weight for any pair is just the dot product of their vectors - so interactions generalize even to feature pairs never co-observed in training.",
       },
       lossFunction: {
         text: "L = Σᵢ (yᵢ − ŷᵢ)² + regularization on w and v",
         mechanism: "Minimized by stochastic gradient descent. For the one-hot user/item case here it reduces to exactly the classic biased matrix-factorization update, adjusting w₀, the user/item biases, and the latent vectors after each observed rating.",
       },
-      output: "A predicted continuous rating/score for any (user, item) pair — including pairs never observed during training.",
+      output: "A predicted continuous rating/score for any (user, item) pair - including pairs never observed during training.",
       parameters: [
         { name: "latent dimension k", effect: "How much interaction structure can be captured (fixed at 2 here so the latent space is directly plottable)." },
         { name: "learning rate", effect: "SGD step size for updating biases and latent vectors." },
@@ -192,7 +192,7 @@
           "Dot product ⟨v_u, v_i⟩ = 0.5×0.4 + 0.2×0.1 = 0.20 + 0.02 = 0.22.",
           "ŷ = w0 + w_u + w_i + ⟨v_u,v_i⟩ = 3 + 0.2 + (−0.1) + 0.22.",
         ],
-        result: "ŷ = 3.32 — the bias terms set a baseline (~3.1) and the latent-vector interaction adds +0.22 for this specific user/item pair",
+        result: "ŷ = 3.32 - the bias terms set a baseline (~3.1) and the latent-vector interaction adds +0.22 for this specific user/item pair",
       },
     },
     mount,

@@ -27,7 +27,7 @@
           <div class="control-card">
             <h3>state</h3>
             <div class="readout" id="km-readout">–</div>
-            <div class="note">Lloyd's algorithm: assign each point to its closest centroid, then move each centroid to the mean of its assigned points, repeat — the same loop as <code>mla/kmeans.py</code>.</div>
+            <div class="note">Lloyd's algorithm: assign each point to its closest centroid, then move each centroid to the mean of its assigned points, repeat - the same loop as <code>mla/kmeans.py</code>.</div>
           </div>
         </div>
       </div>
@@ -139,27 +139,27 @@
   MLApp.register({
     id: "kmeans",
     name: "K-Means",
-    category: "Unsupervised — Clustering",
+    category: "Unsupervised - Clustering",
     tagline: "Lloyd's algorithm, step-through",
     description: "Hard clustering via alternating assignment and centroid-averaging. Step through iterations one at a time to see exactly how the centroids converge.",
     sourceFile: "mla/kmeans.py",
     info: {
-      type: "Unsupervised — Clustering. Centroid-based, hard assignment.",
-      scenario: "Partitioning unlabeled data into k compact, roughly spherical groups — customer segmentation, color quantization, or as an unsupervised pre-processing step.",
+      type: "Unsupervised - Clustering. Centroid-based, hard assignment.",
+      scenario: "Partitioning unlabeled data into k compact, roughly spherical groups - customer segmentation, color quantization, or as an unsupervised pre-processing step.",
       inputs: "Unlabeled points {xᵢ} and a chosen number of clusters k.",
       decisionFunction: {
         text: "assign(x) = argmin_j ‖x − cⱼ‖²",
-        mechanism: "Lloyd's algorithm alternates: (1) assign every point to its nearest centroid, (2) move each centroid to the mean of its assigned points — repeated until assignments stop changing.",
+        mechanism: "Lloyd's algorithm alternates: (1) assign every point to its nearest centroid, (2) move each centroid to the mean of its assigned points - repeated until assignments stop changing.",
       },
       lossFunction: {
         text: "J = Σᵢ Σ_{x∈Cᵢ} ‖x − cᵢ‖²  (inertia / within-cluster sum of squares)",
-        mechanism: "Each Lloyd step provably never increases J, so it converges — but only to a local minimum, which is why the result depends on how centroids were initialized.",
-        plot: { fn: (k) => 10 / (k + 0.6) + 0.3, domain: [1, 8], color: "var(--accent)", caption: "typical inertia-vs-k 'elbow' curve — pick k near where it stops dropping sharply" },
+        mechanism: "Each Lloyd step provably never increases J, so it converges - but only to a local minimum, which is why the result depends on how centroids were initialized.",
+        plot: { fn: (k) => 10 / (k + 0.6) + 0.3, domain: [1, 8], color: "var(--accent)", caption: "typical inertia-vs-k 'elbow' curve - pick k near where it stops dropping sharply" },
       },
       output: "A cluster index for every point, plus the k centroid coordinates.",
       parameters: [
-        { name: "k", effect: "Number of clusters — the main lever, usually chosen via the elbow method or silhouette score." },
-        { name: "initialization", effect: "Random vs k-means++ starting centroids — strongly affects which local minimum is found." },
+        { name: "k", effect: "Number of clusters - the main lever, usually chosen via the elbow method or silhouette score." },
+        { name: "initialization", effect: "Random vs k-means++ starting centroids - strongly affects which local minimum is found." },
         { name: "restarts", effect: "Running Lloyd's algorithm from several initializations and keeping the lowest-inertia result." },
       ],
       metrics: ["Inertia / WCSS", "Silhouette score", "Davies–Bouldin index", "Adjusted Rand Index / NMI (if ground-truth labels exist)"],
@@ -173,7 +173,7 @@
           "Assign (5,5): dist to C1=√32≈5.66, to C2=0 → C2.",
           "Update C1 = mean of (1,1),(1,2) = (1, 1.5). Update C2 = mean of (4,4),(5,5) = (4.5, 4.5).",
         ],
-        result: "After one iteration: C1=(1, 1.5), C2=(4.5, 4.5) — already close to the final converged centroids",
+        result: "After one iteration: C1=(1, 1.5), C2=(4.5, 4.5) - already close to the final converged centroids",
       },
     },
     mount,

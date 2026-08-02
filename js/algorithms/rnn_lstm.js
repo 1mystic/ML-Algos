@@ -58,7 +58,7 @@
             </div>
           </div>
           <div style="padding:10px 4px">
-            <div class="stage-hint" style="margin-bottom:6px">input sequence — click a step to toggle 0 / 1</div>
+            <div class="stage-hint" style="margin-bottom:6px">input sequence - click a step to toggle 0 / 1</div>
             <div id="rnn-seq" class="hscroll" style="display:flex;gap:4px;margin-bottom:16px"></div>
             <div id="rnn-gates" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px"></div>
             <div class="stage-hint" style="margin:16px 0 6px">hidden state h over time (unit 0)</div>
@@ -78,8 +78,8 @@
       </div>
     `;
 
-    const LSTM_NOTE = "At each step the LSTM computes forget (f), input (i) and output (o) gates plus a candidate (g), then updates the cell state c<sub>t</sub>=f&middot;c<sub>t-1</sub>+i&middot;g and hidden state h<sub>t</sub>=o&middot;tanh(c<sub>t</sub>) — the gating equations behind <code>mla/neuralnet</code>'s LSTM layer, run here with fixed random weights so you can watch the mechanics without a training loop.";
-    const RNN_NOTE = "A vanilla RNN collapses all of that into one update: h<sub>t</sub> = tanh(W<sub>x</sub>x<sub>t</sub> + W<sub>h</sub>h<sub>t-1</sub> + b). Compare its trace to the LSTM's — notice how much faster it can saturate or forget.";
+    const LSTM_NOTE = "At each step the LSTM computes forget (f), input (i) and output (o) gates plus a candidate (g), then updates the cell state c<sub>t</sub>=f&middot;c<sub>t-1</sub>+i&middot;g and hidden state h<sub>t</sub>=o&middot;tanh(c<sub>t</sub>) - the gating equations behind <code>mla/neuralnet</code>'s LSTM layer, run here with fixed random weights so you can watch the mechanics without a training loop.";
+    const RNN_NOTE = "A vanilla RNN collapses all of that into one update: h<sub>t</sub> = tanh(W<sub>x</sub>x<sub>t</sub> + W<sub>h</sub>h<sub>t-1</sub> + b). Compare its trace to the LSTM's - notice how much faster it can saturate or forget.";
 
     let seq = [1, 0, 1, 1, 0, 0, 1, 0, 1, 1];
     let weights = { lstm: makeWeights(true), rnn: makeWeights(false) };
@@ -176,23 +176,23 @@
     description: "Step a recurrent cell through a binary sequence one timestep at a time, watching every gate activation, the cell state, and the hidden state update live. Toggle between a vanilla RNN and an LSTM to compare.",
     sourceFile: "mla/neuralnet/rnn.py",
     info: {
-      type: "Building block of sequence models — recurrent, parametric, stateful (vanilla RNN or LSTM cell).",
-      scenario: "Sequence data where order and (for LSTM) long-range dependencies matter — text, time series, audio — anywhere a fixed-size input vector isn't natural.",
+      type: "Building block of sequence models - recurrent, parametric, stateful (vanilla RNN or LSTM cell).",
+      scenario: "Sequence data where order and (for LSTM) long-range dependencies matter - text, time series, audio - anywhere a fixed-size input vector isn't natural.",
       inputs: "A sequence x₁, …, x_T processed one timestep at a time, carrying forward a hidden state (and, for LSTM, a cell state).",
       decisionFunction: {
         text: "RNN: hₜ=tanh(Wₓxₜ+W_hhₜ₋₁+b)   LSTM: fₜ,iₜ,oₜ=σ(·), gₜ=tanh(·), cₜ=fₜ·cₜ₋₁+iₜ·gₜ, hₜ=oₜ·tanh(cₜ)",
-        mechanism: "The same small set of weights is reapplied at every timestep, using the previous hidden (and cell) state as extra input. LSTM's three gates learn when to forget old information, write new information, and expose the cell state — letting it retain information far longer than a vanilla RNN before gradients vanish.",
-        plot: { fn: (z) => 1 / (1 + Math.exp(-z)), domain: [-6, 6], color: "var(--accent)", caption: "the sigmoid squashing every LSTM gate into a soft [0,1] switch — near 0 blocks information flow, near 1 passes it through" },
+        mechanism: "The same small set of weights is reapplied at every timestep, using the previous hidden (and cell) state as extra input. LSTM's three gates learn when to forget old information, write new information, and expose the cell state - letting it retain information far longer than a vanilla RNN before gradients vanish.",
+        plot: { fn: (z) => 1 / (1 + Math.exp(-z)), domain: [-6, 6], color: "var(--accent)", caption: "the sigmoid squashing every LSTM gate into a soft [0,1] switch - near 0 blocks information flow, near 1 passes it through" },
       },
       lossFunction: {
         text: "Task-dependent (cross-entropy for next-token prediction, MSE for sequence regression), summed over timesteps",
-        mechanism: "Trained via backpropagation through time (BPTT) — the chain rule is unrolled across every timestep, which is exactly why vanishing/exploding gradients are a bigger problem here than in feed-forward nets, and exactly what LSTM's gates were designed to mitigate.",
+        mechanism: "Trained via backpropagation through time (BPTT) - the chain rule is unrolled across every timestep, which is exactly why vanishing/exploding gradients are a bigger problem here than in feed-forward nets, and exactly what LSTM's gates were designed to mitigate.",
       },
       output: "A hidden state hₜ at every timestep, used directly or fed into a further output layer for predictions.",
       parameters: [
         { name: "hidden size", effect: "Memory capacity. More units can represent richer state but cost more compute and can overfit short sequences." },
         { name: "cell type", effect: "Vanilla RNN (simpler, faster) vs LSTM (more parameters, much better long-range memory and gradient stability)." },
-        { name: "sequence length trained on", effect: "How far back the model is asked to remember during training — longer sequences stress gradient flow more." },
+        { name: "sequence length trained on", effect: "How far back the model is asked to remember during training - longer sequences stress gradient flow more." },
       ],
       metrics: ["Perplexity / cross-entropy (language modeling)", "MSE (time-series forecasting)", "Accuracy (sequence classification)"],
       typicalUses: ["Language modeling", "Machine translation (pre-Transformer era)", "Time-series forecasting", "Speech recognition"],
@@ -202,7 +202,7 @@
           "Step 1: h₁ = tanh(0.5×1 + 0.8×0 + 0) = tanh(0.5) ≈ 0.4621.",
           "Step 2: h₂ = tanh(0.5×0 + 0.8×0.4621 + 0) = tanh(0.3697) ≈ 0.3538.",
         ],
-        result: "Hidden state decays from 0.4621 toward 0 once the input stops — with no gating, memory of x₁ fades geometrically each step",
+        result: "Hidden state decays from 0.4621 toward 0 once the input stops - with no gating, memory of x₁ fades geometrically each step",
       },
     },
     mount,

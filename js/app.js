@@ -3,32 +3,32 @@
 const MLApp = (() => {
   const registry = [];
   const order = [
-    "Supervised — Regression",
-    "Supervised — Classification",
-    "Supervised — Trees & Ensembles",
-    "Unsupervised — Clustering",
-    "Unsupervised — Dimensionality Reduction",
+    "Supervised - Regression",
+    "Supervised - Classification",
+    "Supervised - Trees & Ensembles",
+    "Unsupervised - Clustering",
+    "Unsupervised - Dimensionality Reduction",
     "Deep Learning",
     "Reinforcement Learning",
   ];
   const CATEGORY_META = {
-    "Supervised — Regression": {
+    "Supervised - Regression": {
       color: "var(--pastel-green)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17 L9 11 L13 14 L20 5"/><circle cx="4" cy="17" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="11" r="1.3" fill="currentColor" stroke="none"/><circle cx="13" cy="14" r="1.3" fill="currentColor" stroke="none"/><circle cx="20" cy="5" r="1.3" fill="currentColor" stroke="none"/></svg>`,
     },
-    "Supervised — Classification": {
+    "Supervised - Classification": {
       color: "var(--pastel-red)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="21" x2="21" y2="3"/><circle cx="7" cy="8" r="1.5" fill="currentColor" stroke="none"/><circle cx="11" cy="6" r="1.5" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.5"/><circle cx="18" cy="14" r="1.5"/><circle cx="14" cy="20" r="1.5"/></svg>`,
     },
-    "Supervised — Trees & Ensembles": {
+    "Supervised - Trees & Ensembles": {
       color: "var(--series-4)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="1.6" fill="currentColor" stroke="none"/><line x1="12" y1="5.6" x2="12" y2="9"/><line x1="12" y1="9" x2="6" y2="14"/><line x1="12" y1="9" x2="18" y2="14"/><circle cx="6" cy="15.6" r="1.5"/><circle cx="18" cy="15.6" r="1.5"/><line x1="6" y1="17" x2="4" y2="21"/><line x1="6" y1="17" x2="8" y2="21"/><line x1="18" y1="17" x2="16" y2="21"/><line x1="18" y1="17" x2="20" y2="21"/></svg>`,
     },
-    "Unsupervised — Clustering": {
+    "Unsupervised - Clustering": {
       color: "var(--series-1)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="16" cy="14" r="4"/><circle cx="7" cy="17" r="3"/></svg>`,
     },
-    "Unsupervised — Dimensionality Reduction": {
+    "Unsupervised - Dimensionality Reduction": {
       color: "var(--series-5)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="20" x2="21" y2="20"/><circle cx="6" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="4" r="1.3" fill="currentColor" stroke="none"/><circle cx="17" cy="9" r="1.3" fill="currentColor" stroke="none"/><line x1="6" y1="6" x2="6" y2="20" stroke-dasharray="2 2"/><line x1="12" y1="4" x2="12" y2="20" stroke-dasharray="2 2"/><line x1="17" y1="9" x2="17" y2="20" stroke-dasharray="2 2"/></svg>`,
     },
@@ -115,8 +115,8 @@ const MLApp = (() => {
     const main = document.getElementById("main");
     main.innerHTML = `
       <div class="main-header">
-        <h1>ML Algorithms — Interactive Lab</h1>
-        <p>A visual, hands-on companion to <b>rushter/MLAlgorithms</b> — a from-scratch collection of ML algorithms in Python/numpy, cloned alongside this page. Every demo below reimplements the same algorithm in JavaScript so you can click, drag and step through it live. Pick one from the sidebar, or a card below.</p>
+        <h1>ML Algorithms - Interactive Lab</h1>
+        <p>A visual, hands-on companion to <b>rushter/MLAlgorithms</b> - a from-scratch collection of ML algorithms in Python/numpy, cloned alongside this page. Every demo below reimplements the same algorithm in JavaScript so you can click, drag and step through it live. Pick one from the sidebar, or a card below.</p>
       </div>
       <div class="home-categories">
         ${order.map((cat) => {
@@ -236,7 +236,7 @@ const MLApp = (() => {
       </div>`).join("")}</div>`;
   }
 
-  // Examiner-style Q&A chain — the "why does that follow?" drill-down.
+  // Examiner-style Q&A chain - the "why does that follow?" drill-down.
   function whyChain(items) {
     if (!items || !items.length) return "";
     return `<div class="why-chain">${items.map((qa) => `
@@ -256,7 +256,7 @@ const MLApp = (() => {
     const i = info;
     const num = (() => { let n = 0; return () => ++n; })();
 
-    // 1 — Core concept: definition, intuition steps, real-world uses.
+    // 1 - Core concept: definition, intuition steps, real-world uses.
     const overview = `
       <div class="info-grid">
         ${i.intuition && i.intuition.definition ? `<div class="info-block span2 lede"><p>${i.intuition.definition}</p></div>` : ""}
@@ -310,12 +310,12 @@ const MLApp = (() => {
       (i.advantages || i.limitations) ? section(num(), "Advantages &amp; limitations", `
         <div class="pro-con">
           ${i.advantages ? `<div class="info-block pros"><h4>Advantages</h4>${list(i.advantages)}</div>` : ""}
-          ${i.limitations ? `<div class="info-block cons"><h4>Limitations</h4>${list(i.limitations.map((l) => typeof l === "string" ? l : `${l.name} — ${l.note}${l.fix ? ` <i>Fix: ${l.fix}</i>` : ""}`))}</div>` : ""}
+          ${i.limitations ? `<div class="info-block cons"><h4>Limitations</h4>${list(i.limitations.map((l) => typeof l === "string" ? l : `${l.name} - ${l.note}${l.fix ? ` <i>Fix: ${l.fix}</i>` : ""}`))}</div>` : ""}
         </div>
         ${i.alternatives ? table(["Reach for instead", "When"], i.alternatives.map((a) => [a.name, a.when])) : ""}`) : "",
       i.pitfalls ? section(num(), "Common pitfalls",
         table(["Pitfall", "Solution"], i.pitfalls.map((p) => [p.problem, p.solution]))) : "",
-      i.workedExample ? section(num(), "Worked example — by hand", `
+      i.workedExample ? section(num(), "Worked example - by hand", `
         <div class="info-grid"><div class="info-block span2 worked-example">
           <p><b>${i.workedExample.setup}</b></p>
           <ol class="info-list">${i.workedExample.steps.map((s) => `<li>${s}</li>`).join("")}</ol>
@@ -325,7 +325,7 @@ const MLApp = (() => {
         i.quickRef ? table(["Component", "Formula"], i.quickRef.map((q) => [q.name, `<span class="inline-formula">${q.formula}</span>`])) : "",
         codeBlock(i.code),
       ].join("")) : "",
-      i.whyChain ? section(num(), "Why-chain — interview drill", whyChain(i.whyChain)) : "",
+      i.whyChain ? section(num(), "Why-chain - interview drill", whyChain(i.whyChain)) : "",
     ].join("");
 
     if (i.decisionFunction.plot) MLU.plotFn(container.querySelector("#plot-decision"), i.decisionFunction.plot);
@@ -388,5 +388,7 @@ const MLApp = (() => {
     router();
   }
 
-  return { register, init };
+  // `registry` and `renderInfo` are exposed so the reference pages can be
+  // rendered headlessly and checked for gaps without a browser.
+  return { register, init, registry, renderInfo };
 })();

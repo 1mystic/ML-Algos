@@ -56,7 +56,7 @@
           <div class="control-card">
             <h3>energy-based sampling</h3>
             <div class="readout" id="rbm-readout">–</div>
-            <div class="note">A Restricted Boltzmann Machine has no visible-visible or hidden-hidden connections, so both conditionals factorize: p(h<sub>j</sub>=1|v)=&sigma;(&sum;<sub>i</sub>W<sub>ij</sub>v<sub>i</sub>+c<sub>j</sub>) and p(v<sub>i</sub>=1|h)=&sigma;(&sum;<sub>j</sub>W<sub>ij</sub>h<sub>j</sub>+b<sub>i</sub>). Each "Gibbs step" samples h from v, then resamples v from that h — the block-Gibbs sweep used for contrastive divergence in <code>mla/rbm.py</code>, shown here with fixed random weights rather than trained ones.</div>
+            <div class="note">A Restricted Boltzmann Machine has no visible-visible or hidden-hidden connections, so both conditionals factorize: p(h<sub>j</sub>=1|v)=&sigma;(&sum;<sub>i</sub>W<sub>ij</sub>v<sub>i</sub>+c<sub>j</sub>) and p(v<sub>i</sub>=1|h)=&sigma;(&sum;<sub>j</sub>W<sub>ij</sub>h<sub>j</sub>+b<sub>i</sub>). Each "Gibbs step" samples h from v, then resamples v from that h - the block-Gibbs sweep used for contrastive divergence in <code>mla/rbm.py</code>, shown here with fixed random weights rather than trained ones.</div>
           </div>
         </div>
       </div>
@@ -117,15 +117,15 @@
     name: "Restricted Boltzmann Machine",
     category: "Deep Learning",
     tagline: "block-Gibbs sampling",
-    description: "Draw a binary pattern on the visible layer and alternately sample hidden-given-visible and visible-given-hidden — the block-Gibbs sweep at the heart of RBM training and generation.",
+    description: "Draw a binary pattern on the visible layer and alternately sample hidden-given-visible and visible-given-hidden - the block-Gibbs sweep at the heart of RBM training and generation.",
     sourceFile: "mla/rbm.py",
     info: {
-      type: "Unsupervised — Generative, energy-based, bipartite undirected graphical model.",
+      type: "Unsupervised - Generative, energy-based, bipartite undirected graphical model.",
       scenario: "Learning a probability distribution over binary (or binarized) data to generate samples, extract latent features, or pretrain deeper networks (stacked RBMs historically formed deep belief networks).",
-      inputs: "A binary (or [0,1]-valued) visible vector v; hidden vector h has no observed data — it's inferred.",
+      inputs: "A binary (or [0,1]-valued) visible vector v; hidden vector h has no observed data - it's inferred.",
       decisionFunction: {
         text: "p(hⱼ=1|v)=σ(Σᵢ Wᵢⱼvᵢ+cⱼ)     p(vᵢ=1|h)=σ(Σⱼ Wᵢⱼhⱼ+bᵢ)",
-        mechanism: "Because there are no visible-visible or hidden-hidden connections ('restricted'), both conditionals factorize into independent per-unit sigmoids — exactly what makes alternating block-Gibbs sampling between v and h tractable.",
+        mechanism: "Because there are no visible-visible or hidden-hidden connections ('restricted'), both conditionals factorize into independent per-unit sigmoids - exactly what makes alternating block-Gibbs sampling between v and h tractable.",
         plot: { fn: (z) => 1 / (1 + Math.exp(-z)), domain: [-6, 6], color: "var(--accent)", caption: "both conditionals are independent per-unit sigmoids of a weighted sum" },
       },
       lossFunction: {
@@ -134,7 +134,7 @@
       },
       output: "Samples of the hidden layer (a learned latent/feature representation) or reconstructed visible samples.",
       parameters: [
-        { name: "hidden units", effect: "Representational capacity — more hidden units can capture more complex visible-layer structure." },
+        { name: "hidden units", effect: "Representational capacity - more hidden units can capture more complex visible-layer structure." },
         { name: "CD-k (Gibbs steps)", effect: "More contrastive-divergence steps give a better gradient estimate at higher compute cost." },
         { name: "learning rate", effect: "Size of the weight update during contrastive-divergence training." },
       ],
@@ -146,7 +146,7 @@
           "z = W·v + c1 = 0.5×1 + (−0.3)×0 + 0.2×1 + 0 = 0.7.",
           "p(h1=1|v) = σ(0.7) = 1/(1+e⁻⁰·⁷) = 1/(1+0.4966) = 1/1.4966.",
         ],
-        result: "p(h1=1|v) ≈ 0.668 — hidden unit 1 is likely (but not certain) to activate given this visible pattern",
+        result: "p(h1=1|v) ≈ 0.668 - hidden unit 1 is likely (but not certain) to activate given this visible pattern",
       },
     },
     mount,

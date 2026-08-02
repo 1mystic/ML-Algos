@@ -35,7 +35,7 @@
           <div class="control-card">
             <h3>state</h3>
             <div class="readout" id="gm-readout">–</div>
-            <div class="note">Expectation-Maximization: E-step computes soft responsibilities under each Gaussian, M-step re-estimates each component's mean/covariance/weight from those responsibilities — as in <code>mla/gaussian_mixture.py</code>.</div>
+            <div class="note">Expectation-Maximization: E-step computes soft responsibilities under each Gaussian, M-step re-estimates each component's mean/covariance/weight from those responsibilities - as in <code>mla/gaussian_mixture.py</code>.</div>
           </div>
         </div>
       </div>
@@ -171,13 +171,13 @@
   MLApp.register({
     id: "gmm",
     name: "Gaussian Mixture Model",
-    category: "Unsupervised — Clustering",
+    category: "Unsupervised - Clustering",
     tagline: "EM algorithm, soft clusters",
     description: "Soft clustering via Expectation-Maximization: components are full 2D Gaussians (with orientation), fit by alternating responsibility estimation (E) and weighted re-fitting (M).",
     sourceFile: "mla/gaussian_mixture.py",
     info: {
-      type: "Unsupervised — Clustering (soft/probabilistic). Generative mixture model.",
-      scenario: "Clusters that overlap or have different sizes/shapes/orientations, or when you need membership probabilities rather than hard labels — a probabilistic generalization of K-Means.",
+      type: "Unsupervised - Clustering (soft/probabilistic). Generative mixture model.",
+      scenario: "Clusters that overlap or have different sizes/shapes/orientations, or when you need membership probabilities rather than hard labels - a probabilistic generalization of K-Means.",
       inputs: "Unlabeled points and a chosen number of mixture components k.",
       decisionFunction: {
         text: "γ_{ik} = P(component k | x) ∝ π_k · N(x; μ_k, Σ_k)",
@@ -186,7 +186,7 @@
       },
       lossFunction: {
         text: "−Σᵢ log( Σ_k π_k · N(xᵢ; μ_k, Σ_k) )  (negative log-likelihood)",
-        mechanism: "Minimized via Expectation-Maximization: the E-step computes responsibilities under current parameters, the M-step re-fits each component's mean/covariance/weight as the responsibility-weighted statistics — each step never decreases the likelihood.",
+        mechanism: "Minimized via Expectation-Maximization: the E-step computes responsibilities under current parameters, the M-step re-fits each component's mean/covariance/weight as the responsibility-weighted statistics - each step never decreases the likelihood.",
       },
       output: "Soft responsibilities per point per component, plus each component's mean, covariance, and weight.",
       parameters: [
@@ -204,7 +204,7 @@
           "Unnormalized responsibilities: r₁ = 0.5×0.2420 = 0.1210, r₂ = 0.5×0.00443 = 0.00222.",
           "Normalize: γ₁ = 0.1210/(0.1210+0.00222) ≈ 0.982, γ₂ ≈ 0.018.",
         ],
-        result: "x=1 is assigned ~98.2% responsibility to component 1, 1.8% to component 2 — soft, not all-or-nothing like K-Means",
+        result: "x=1 is assigned ~98.2% responsibility to component 1, 1.8% to component 2 - soft, not all-or-nothing like K-Means",
       },
     },
     mount,

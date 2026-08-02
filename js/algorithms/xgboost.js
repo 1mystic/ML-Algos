@@ -62,7 +62,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="xgb-readout">–</div>
-            <div class="note">Unlike plain gradient boosting, each split is only kept if its Gain exceeds &gamma; (a real prune step), and every leaf's value is shrunk toward 0 by &lambda; — try raising &gamma; and watch shallow, low-gain splits stop happening.</div>
+            <div class="note">Unlike plain gradient boosting, each split is only kept if its Gain exceeds &gamma; (a real prune step), and every leaf's value is shrunk toward 0 by &lambda; - try raising &gamma; and watch shallow, low-gain splits stop happening.</div>
           </div>
         </div>
       </div>
@@ -136,13 +136,13 @@
   MLApp.register({
     id: "xgboost",
     name: "XGBoost",
-    category: "Supervised — Trees & Ensembles",
+    category: "Supervised - Trees & Ensembles",
     tagline: "regularized, 2nd-order boosting",
     description: "Gradient boosting with a Newton (2nd-order, gradient+hessian) approximation to the loss, an explicit per-leaf L2 penalty, and a minimum-gain threshold that prunes low-value splits automatically.",
-    sourceFile: "not in the original repo — added as a widely-used, more regularized extension of mla/ensemble/gbm.py's plain gradient boosting",
+    sourceFile: "not in the original repo - added as a widely-used, more regularized extension of mla/ensemble/gbm.py's plain gradient boosting",
     info: {
-      type: "Supervised — Regression/Classification. Regularized, second-order (Newton) gradient-boosted tree ensemble.",
-      scenario: "Top predictive accuracy on tabular data with finer control over overfitting than plain gradient boosting — historically the dominant tabular-competition baseline.",
+      type: "Supervised - Regression/Classification. Regularized, second-order (Newton) gradient-boosted tree ensemble.",
+      scenario: "Top predictive accuracy on tabular data with finer control over overfitting than plain gradient boosting - historically the dominant tabular-competition baseline.",
       inputs: "Feature vectors x and targets y.",
       decisionFunction: {
         text: "ŷ(x) = F₀ + η·Σₘ treeₘ(x), same additive form as plain GBM",
@@ -151,13 +151,13 @@
       lossFunction: {
         text: "Obj = Σᵢ l(yᵢ,ŷᵢ) + Σₘ[γT + ½λΣ_leaf w²]  →  leaf weight w* = −G/(H+λ),  Gain = ½[GL²/(HL+λ) + GR²/(HR+λ) − G²/(H+λ)] − γ",
         mechanism: "For squared error, gᵢ=ŷᵢ−yᵢ and hᵢ=1, so the optimal leaf value has a closed form; a candidate split is only taken if its Gain is positive, which is what lets XGBoost prune low-value splits automatically via γ rather than relying solely on a depth limit.",
-        plot: { fn: (lam) => 2 / (1 + lam), domain: [0, 10], color: "var(--accent)", caption: "regularized leaf weight w*=−G/(H+λ) for fixed G=−2,H=1 — larger λ shrinks the leaf value toward 0" },
+        plot: { fn: (lam) => 2 / (1 + lam), domain: [0, 10], color: "var(--accent)", caption: "regularized leaf weight w*=−G/(H+λ) for fixed G=−2,H=1 - larger λ shrinks the leaf value toward 0" },
       },
       output: "A continuous predicted value (sum of shrunk, regularized tree contributions).",
       parameters: [
         { name: "learning rate η", effect: "Shrinks every tree's contribution, same role as in plain GBM." },
         { name: "λ (L2 on leaf weights)", effect: "Larger λ pulls every leaf's value toward 0, damping the influence of leaves with little data (low H)." },
-        { name: "γ (min split gain)", effect: "A split is only made if it improves the objective by more than γ — larger γ prunes more aggressively, producing simpler trees." },
+        { name: "γ (min split gain)", effect: "A split is only made if it improves the objective by more than γ - larger γ prunes more aggressively, producing simpler trees." },
         { name: "max depth", effect: "Upper bound on tree depth, same role as in plain GBM/decision trees." },
       ],
       metrics: ["RMSE / MAE / R² (regression)", "Log-loss / AUC (classification)", "Validation-set early-stopping curve"],

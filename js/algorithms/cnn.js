@@ -55,7 +55,7 @@
       <div class="panel">
         <div class="stage">
           <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">draw on the input grid — click and drag</span></div>
+            <div class="legend"><span class="stage-hint">draw on the input grid - click and drag</span></div>
             <div class="btn-row">
               <button id="cnn-plus">draw +</button>
               <button id="cnn-diag">draw diagonal</button>
@@ -89,7 +89,7 @@
           </div>
           <div class="control-card">
             <h3>what's happening</h3>
-            <div class="note">A convolutional layer slides one small learned kernel across the image, computing a weighted sum at every position (the feature map). ReLU zeroes negative activations; max-pooling then downsamples by keeping the strongest response in each 2×2 block — the building blocks behind <code>mla/neuralnet</code>'s CNN layer, made tweakable here instead of learned.</div>
+            <div class="note">A convolutional layer slides one small learned kernel across the image, computing a weighted sum at every position (the feature map). ReLU zeroes negative activations; max-pooling then downsamples by keeping the strongest response in each 2×2 block - the building blocks behind <code>mla/neuralnet</code>'s CNN layer, made tweakable here instead of learned.</div>
           </div>
         </div>
       </div>
@@ -174,22 +174,22 @@
     description: "Draw a small image and watch it pass through one convolutional layer: a 3×3 kernel slides across the input, an optional ReLU clips negatives, and max-pooling downsamples the result.",
     sourceFile: "mla/neuralnet",
     info: {
-      type: "Building block of supervised deep nets — a parametric, weight-sharing feature-extraction layer (convolution).",
+      type: "Building block of supervised deep nets - a parametric, weight-sharing feature-extraction layer (convolution).",
       scenario: "Image (or other grid-structured, e.g. spectrogram) data where spatially-local patterns like edges and textures matter, and you want far fewer parameters than a fully-connected layer by reusing one small filter everywhere.",
       inputs: "A 2D grid of pixel/feature values, and one or more small kernels (filters).",
       decisionFunction: {
         text: "feature_map[i,j] = Σ_{ki,kj} kernel[ki,kj]·input[i+ki, j+kj]  (+ bias), then usually ReLU + max-pool",
-        mechanism: "The same small kernel slides across every position of the input, computing a local weighted sum at each — this is what makes the layer translation-equivariant and far cheaper than a dense layer over the whole image.",
+        mechanism: "The same small kernel slides across every position of the input, computing a local weighted sum at each - this is what makes the layer translation-equivariant and far cheaper than a dense layer over the whole image.",
       },
       lossFunction: {
         text: "(in a trained CNN) the network's overall loss, e.g. cross-entropy on the final classification, backpropagated through pooling and convolution",
-        mechanism: "Here the kernel is fixed/hand-set rather than learned, so you can see exactly what one filter does to an image before any training happens — in practice, gradients from the final loss update every kernel value via backprop.",
+        mechanism: "Here the kernel is fixed/hand-set rather than learned, so you can see exactly what one filter does to an image before any training happens - in practice, gradients from the final loss update every kernel value via backprop.",
       },
       output: "A transformed 'feature map' (same or smaller size than the input), then a further downsampled pooled map.",
       parameters: [
-        { name: "kernel weights", effect: "What pattern the filter detects (edges, blur, sharpen here — learned automatically during real training)." },
+        { name: "kernel weights", effect: "What pattern the filter detects (edges, blur, sharpen here - learned automatically during real training)." },
         { name: "ReLU on/off", effect: "Introduces non-linearity and zeroes out negative responses, so only 'this pattern is present' signals pass through positively." },
-        { name: "pooling window/stride", effect: "How aggressively spatial resolution is reduced after convolution — larger pooling discards more fine spatial detail." },
+        { name: "pooling window/stride", effect: "How aggressively spatial resolution is reduced after convolution - larger pooling discards more fine spatial detail." },
       ],
       metrics: ["Classification accuracy / top-k accuracy (full network)", "IoU (segmentation/detection)", "Qualitative inspection of feature maps (this layer alone)"],
       typicalUses: ["Image classification", "Object detection / segmentation", "Any grid-structured signal (e.g. spectrograms) where local patterns matter"],
@@ -201,7 +201,7 @@
           "Row 3: 1×1 + 0×0 + 0×(−1) = 1.",
           "Sum all rows: 1 + 1 + 1 = 3.",
         ],
-        result: "Output activation = 3 — a strong positive response, correctly flagging a left-edge under this vertical-edge filter",
+        result: "Output activation = 3 - a strong positive response, correctly flagging a left-edge under this vertical-edge filter",
       },
     },
     mount,

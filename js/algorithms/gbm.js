@@ -52,7 +52,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="gbm-readout">–</div>
-            <div class="note">Gradient boosting on squared error: F<sub>0</sub> = mean(y); each new shallow tree is fit to the current residual y − F(x), then added in as F += &eta;&middot;tree(x) — the loop in <code>mla/ensemble/gbm.py</code>.</div>
+            <div class="note">Gradient boosting on squared error: F<sub>0</sub> = mean(y); each new shallow tree is fit to the current residual y − F(x), then added in as F += &eta;&middot;tree(x) - the loop in <code>mla/ensemble/gbm.py</code>.</div>
           </div>
         </div>
       </div>
@@ -124,22 +124,53 @@
   MLApp.register({
     id: "gbm",
     name: "Gradient Boosting Trees",
-    category: "Supervised — Trees & Ensembles",
+    category: "Supervised - Trees & Ensembles",
     tagline: "stagewise residual fitting",
     description: "Builds an ensemble one shallow regression tree at a time, each fit to the previous ensemble's residuals and shrunk in by a learning rate. Step through boosting rounds to watch the fit tighten.",
     sourceFile: "mla/ensemble/gbm.py",
     info: {
-      type: "Supervised — Regression (classification variants swap in a different loss). Additive ensemble, sequential (stagewise) boosting.",
-      scenario: "High predictive accuracy on tabular data when you can trade some interpretability and training time for it — the idea behind XGBoost/LightGBM.",
+      type: "Supervised - Regression (classification variants swap in a different loss). Additive ensemble, sequential (stagewise) boosting.",
+      scenario: "High predictive accuracy on tabular data when you can trade some interpretability and training time for it - the idea behind XGBoost/LightGBM.",
       inputs: "Feature vectors x and continuous targets y.",
+      intuition: {
+        definition: "Build the model one small tree at a time. Each new tree is fitted to <b>what the ensemble still gets wrong</b>, then shrunk before being added. Thousands of weak learners, each nudging the prediction slightly, compose into a very strong one.",
+        steps: [
+          "Start with a constant prediction, usually the mean.",
+          "Compute the residual (the negative gradient) at every point.",
+          "Fit a shallow tree to those residuals.",
+          "Add it scaled by the learning rate, then repeat.",
+        ],
+        applications: [
+          "Tabular competition winners, almost universally",
+          "Credit and insurance risk scoring",
+          "Demand and sales forecasting",
+          "Search ranking and click-through-rate prediction",
+          "Fraud detection on structured transaction data",
+        ],
+      },
+      math: [
+        { title: "Additive model", formula: "F_M(x) = F₀(x) + η·Σ_{m=1}^{M} h_m(x)", note: "A sum of shrunk weak learners. Each h_m is a shallow regression tree, and η holds each one back so no single tree dominates." },
+        { title: "Initialisation", formula: "F₀(x) = argmin_γ Σᵢ L(yᵢ, γ)", note: "The best constant prediction: the mean for squared error, the median for absolute error, the log-odds for log-loss." },
+        { title: "Pseudo-residuals", formula: "rᵢₘ = −[ ∂L(yᵢ, F(xᵢ)) / ∂F(xᵢ) ]_{F = F_{m−1}}", note: "The negative gradient of the loss with respect to the current prediction. This is the general form; the residual is just the special case for squared error." },
+        { title: "Why residuals for squared error", formula: "L = ½(y − F)²  ⟹  −∂L/∂F = y − F", note: "The gradient is literally the residual, which is why the classic description 'fit the next tree to the errors' is exactly right for regression." },
+        { title: "Fit and shrink", formula: "h_m = tree fit to {(xᵢ, rᵢₘ)},   F_m = F_{m−1} + η·h_m", note: "Gradient descent in function space: each tree is a step in the direction that most reduces the loss, and η is the step size." },
+        { title: "Leaf values", formula: "γ_j = argmin_γ Σ_{xᵢ ∈ leaf j} L(yᵢ, F_{m−1}(xᵢ) + γ)", note: "After the tree structure is fixed, each leaf's output is re-solved against the true loss rather than the gradient approximation." },
+      ],
+      pipeline: [
+        { label: "F₀ = mean(y)", note: "constant start" },
+        { label: "Residuals", note: "r = y − F" },
+        { label: "Fit stump", note: "tree on r" },
+        { label: "Shrink", note: "× learning rate η" },
+        { label: "F += η·h", note: "repeat M times", accent: "green" },
+      ],
       decisionFunction: {
         text: "ŷ(x) = F₀ + η · Σ_{m=1}^{M} treeₘ(x)",
         mechanism: "The prediction is the sum of an initial constant plus many small, shrunk regression trees added one at a time.",
       },
       lossFunction: {
         text: "L = Σᵢ (yᵢ − F(xᵢ))²",
-        mechanism: "Each new tree is fit to the negative gradient of the loss w.r.t. current predictions — for squared error that gradient is exactly the residual, so every round is 'fit a small tree to what's still wrong, then shrink it in'.",
-        plot: { fn: (r) => r * r, domain: [-4, 4], color: "var(--accent)", caption: "same squared-error shape as linear regression — each new tree chases this residual" },
+        mechanism: "Each new tree is fit to the negative gradient of the loss w.r.t. current predictions - for squared error that gradient is exactly the residual, so every round is 'fit a small tree to what's still wrong, then shrink it in'.",
+        plot: { fn: (r) => r * r, domain: [-4, 4], color: "var(--accent)", caption: "same squared-error shape as linear regression - each new tree chases this residual" },
       },
       output: "A continuous predicted value: the sum of every tree's shrunk contribution.",
       parameters: [
@@ -157,7 +188,7 @@
           "Shrink and add: F(1) = 2 + 0.5×(−1) = 1.5. F(2) = 2 + 0.5×0.5 = 2.25. F(3) = 2 + 0.5×0.5 = 2.25.",
           "New residuals = y − F = [1−1.5, 2−2.25, 3−2.25] = [−0.5, −0.25, 0.75].",
         ],
-        result: "Residual magnitudes shrank from [1,0,1] to [0.5,0.25,0.75] after one boosting round — the next tree fits what's left",
+        result: "Residual magnitudes shrank from [1,0,1] to [0.5,0.25,0.75] after one boosting round - the next tree fits what's left",
       },
     },
     mount,

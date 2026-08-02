@@ -11,7 +11,7 @@
   }
 
   // Kernelized Pegasos (Shalev-Shwartz et al.): a light, real online SVM
-  // solver — well suited to a small in-browser demo with linear/poly/rbf kernels.
+  // solver - well suited to a small in-browser demo with linear/poly/rbf kernels.
   function trainSVM(points, type, params, C) {
     const n = points.length;
     const alpha = new Array(n).fill(0);
@@ -71,7 +71,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="svm-readout">–</div>
-            <div class="note">Kernelized Pegasos solver on the dual soft-margin SVM objective — same Linear / Poly / RBF kernel choice as <code>mla/svm/svm.py</code>, trained online rather than via full QP for speed in-browser.</div>
+            <div class="note">Kernelized Pegasos solver on the dual soft-margin SVM objective - same Linear / Poly / RBF kernel choice as <code>mla/svm/svm.py</code>, trained online rather than via full QP for speed in-browser.</div>
           </div>
         </div>
       </div>
@@ -161,26 +161,164 @@
   MLApp.register({
     id: "svm",
     name: "Support Vector Machine",
-    category: "Supervised — Classification",
+    category: "Supervised - Classification",
     tagline: "linear / poly / RBF kernels",
     description: "A kernelized soft-margin SVM trained with the kernel-Pegasos online solver. Switch kernels to see why RBF handles the circular dataset that a linear kernel can't.",
     sourceFile: "mla/svm/svm.py",
     info: {
-      type: "Supervised — Classification (an SVR regression variant also exists). Max-margin kernel method.",
+      type: "Supervised - Classification (an SVR regression variant also exists). Max-margin kernel method.",
       scenario: "Classification with a clear or kernel-separable margin, on small-to-medium datasets, when a robust, theoretically-grounded margin-based classifier is wanted; kernels let it handle non-linear boundaries.",
       inputs: "Feature vectors x, binary labels y ∈ {−1, +1}, and a choice of kernel (linear / poly / RBF).",
+      intuition: {
+        definition: "Of all the hyperplanes that separate the classes, pick the one with the <b>widest margin</b>. Only the points sitting on that margin (the support vectors) matter, and a kernel lets the same machinery draw curved boundaries by working in a higher-dimensional space it never explicitly builds.",
+        steps: [
+          "Find the separating hyperplane with maximum distance to the nearest point.",
+          "Allow a few violations, paid for at rate C (soft margin).",
+          "Only points on or inside the margin get non-zero weight.",
+          "Swap the dot product for a kernel to bend the boundary.",
+        ],
+        applications: [
+          "Text and document classification with thousands of sparse features",
+          "Gene expression and other wide, low-sample bioinformatics data",
+          "Image classification before deep learning took over",
+          "Handwriting recognition",
+          "Novelty detection via the one-class variant",
+        ],
+      },
+      math: [
+        { title: "Margin", formula: "margin = 2 / ‖w‖,  subject to  yᵢ(wᵀxᵢ + b) ≥ 1", note: "Maximising the margin is the same as minimising ‖w‖. The constraint says every point sits on the correct side, at least one unit away in scaled terms." },
+        { title: "Hard-margin primal", formula: "min (1/2)‖w‖²   s.t.  yᵢ(wᵀxᵢ + b) ≥ 1", note: "A convex quadratic program with a unique solution, but it has no answer at all if the data is not perfectly separable." },
+        { title: "Soft margin", formula: "min (1/2)‖w‖² + C·Σᵢ ξᵢ   s.t.  yᵢ(wᵀxᵢ + b) ≥ 1 − ξᵢ,  ξᵢ ≥ 0", note: "Slack variables ξᵢ buy permission to violate the margin. C sets the price." },
+        { title: "Dual form", formula: "max Σᵢαᵢ − (1/2)ΣᵢΣⱼ αᵢαⱼyᵢyⱼ·K(xᵢ,xⱼ)   s.t.  0 ≤ αᵢ ≤ C,  Σᵢαᵢyᵢ = 0", note: "The data appears only inside inner products, which is precisely what makes the kernel trick possible." },
+        { title: "Kernel trick", formula: "K(xᵢ,xⱼ) = φ(xᵢ)ᵀφ(xⱼ)", note: "Compute the inner product in a high-dimensional space without ever forming φ(x). The RBF kernel corresponds to an infinite-dimensional space." },
+        { title: "Decision function", formula: "f(x) = Σ_{i ∈ SV} αᵢyᵢK(xᵢ, x) + b,  ŷ = sign f(x)", note: "Only support vectors contribute, so the stored model is usually far smaller than the training set." },
+      ],
+      pipeline: [
+        { label: "Features x", note: "scaled" },
+        { label: "Kernel K", note: "linear / poly / RBF" },
+        { label: "Solve dual QP", note: "get α, b" },
+        { label: "Support vectors", note: "αᵢ > 0 only" },
+        { label: "sign f(x)", note: "class ±1", accent: "green" },
+      ],
       decisionFunction: {
         text: "ŷ(x) = sign( Σⱼ αⱼyⱼK(xⱼ, x) + b )",
-        mechanism: "The decision is a weighted sum of kernel similarities to the support vectors (points with αⱼ>0) rather than an explicit weight vector — this is what lets the model work in the implicit feature space a kernel induces.",
+        mechanism: "The decision is a weighted sum of kernel similarities to the support vectors (points with αⱼ>0) rather than an explicit weight vector - this is what lets the model work in the implicit feature space a kernel induces.",
       },
       lossFunction: {
         text: "L = Σᵢ max(0, 1 − yᵢf(xᵢ)) + (1/2C)‖w‖²  (hinge loss, soft-margin)",
-        mechanism: "Hinge loss is exactly zero once a point is correctly classified with margin ≥1, so only points near/inside the margin influence the solution — trained here via the kernelized Pegasos online sub-gradient method rather than full quadratic programming.",
-        plot: { fn: (z) => Math.max(0, 1 - z), domain: [-2, 3], yDomain: [0, 3], color: "var(--accent)", fn2: (z) => Math.log(1 + Math.exp(-z)), color2: "var(--text-faint)", caption: "hinge loss (solid) vs margin z=y·f(x) — zero past margin 1; log-loss (dashed) never reaches exactly zero, which is why SVM solutions are sparse" },
+        mechanism: "Hinge loss is exactly zero once a point is correctly classified with margin ≥1, so only points near/inside the margin influence the solution - trained here via the kernelized Pegasos online sub-gradient method rather than full quadratic programming.",
+        plot: { fn: (z) => Math.max(0, 1 - z), domain: [-2, 3], yDomain: [0, 3], color: "var(--accent)", fn2: (z) => Math.log(1 + Math.exp(-z)), color2: "var(--text-faint)", caption: "hinge loss (solid) vs margin z=y·f(x) - zero past margin 1; log-loss (dashed) never reaches exactly zero, which is why SVM solutions are sparse" },
       },
+      optimization: [
+        { title: "Why the dual", formula: "primal: p unknowns    dual: m unknowns", note: "Solving the dual is what exposes the kernel. It also wins outright when features vastly outnumber samples, which is the usual text-classification shape." },
+        { title: "SMO", formula: "optimise two αᵢ at a time, analytically", note: "Sequential Minimal Optimization is the standard solver (libsvm). Each two-variable subproblem has a closed form, so no general QP library is needed." },
+        { title: "Pegasos (used in this demo)", formula: "w := (1 − 1/t)·w + η·yᵢ·xᵢ  when the margin is violated", note: "A stochastic sub-gradient method on the hinge loss. Converges in time independent of the dataset size, which makes it practical online." },
+        { title: "KKT conditions", formula: "αᵢ = 0 → outside margin;  0 < αᵢ < C → on margin;  αᵢ = C → violating", note: "These three cases classify every training point and are how solvers decide when they are done." },
+        { title: "Cost", formula: "train: O(m²) to O(m³)   predict: O(n_SV · p)", note: "The quadratic-to-cubic training cost is why kernel SVMs stall past roughly 100k rows." },
+      ],
       output: "A predicted class label, plus the signed score f(x) (larger magnitude = more confident).",
+      assumptions: [
+        { name: "Features are scaled", why: "Both ‖w‖² and the RBF distance are dominated by large-range features.", check: "Standardize every feature. This matters more for SVM than for almost any other model." },
+        { name: "A margin exists in some space", why: "If classes overlap heavily everywhere, no kernel recovers a clean separation and C just trades one error for another.", check: "Look at the fraction of points that end up as support vectors. Near 100% means no real margin." },
+        { name: "Moderate dataset size", why: "Training is at least quadratic in the number of samples.", check: "Past roughly 100k rows switch to LinearSVC or SGDClassifier." },
+        { name: "Binary labels", why: "The formulation is intrinsically two-class.", check: "Multi-class is built by one-vs-one or one-vs-rest wrappers, which multiply training cost." },
+        { name: "Probabilities not required", why: "SVM outputs a signed distance, not a probability.", check: "Platt scaling can add probabilities but needs an extra internal cross-validation." },
+      ],
+      regularization: [
+        { name: "Soft margin (C)", formula: "(1/2)‖w‖² + C·Σξᵢ", note: "C is the inverse regularization strength. Small C means a wide margin and heavy regularization; large C forces the model to fit the training points." },
+        { name: "Linear kernel", formula: "K(a,b) = aᵀb", note: "No extra capacity. The right default when p is large, as in text." },
+        { name: "Polynomial kernel", formula: "K(a,b) = (γ·aᵀb + r)^d", note: "Captures feature interactions up to order d. Numerically touchy for d above about 3." },
+        { name: "RBF kernel", formula: "K(a,b) = exp(−γ‖a − b‖²)", note: "The general-purpose default. γ sets how far one point's influence reaches; large γ gives tight islands around each point." },
+      ],
+      hyperparameters: [
+        { name: "C", range: "0.01 - 1000", increasing: "Narrower margin, fewer violations tolerated, higher variance and overfitting risk.", strategy: "Log-scale grid jointly with γ. C and γ interact strongly, so never tune them separately." },
+        { name: "kernel", range: "linear / poly / rbf", increasing: "Not applicable", strategy: "Try linear first when p is large or m is large. RBF when the boundary is clearly curved and the data is modest." },
+        { name: "γ (RBF)", range: "1e-4 - 10", increasing: "Each point's influence shrinks, the boundary tightens around individual points, and overfitting rises sharply.", strategy: "Start from 'scale' (1 / (p · var(X))) and search a log grid around it." },
+        { name: "degree (poly)", range: "2 - 5", increasing: "Higher-order interactions, sharply rising cost and numerical instability.", strategy: "Rarely beats RBF. Keep at 2 or 3 if used at all." },
+        { name: "class_weight", range: "None / balanced", increasing: "Raises the cost of misclassifying the minority class.", strategy: "Use 'balanced' on skewed data; it effectively gives each class its own C." },
+        { name: "probability", range: "true / false", increasing: "Not applicable", strategy: "Leave off unless needed. Turning it on adds an internal 5-fold Platt calibration and multiplies training time." },
+      ],
+      metrics: ["Accuracy", "F1-score", "ROC-AUC", "Number of support vectors (model complexity)"],
+      typicalUses: ["Text/document classification", "Bioinformatics (gene-expression classification)", "Image classification (pre-deep-learning era)", "Small/medium datasets needing a strong, controllable non-linear classifier"],
+      diagnostics: [
+        "Track the support-vector fraction. A model where most training points are support vectors is memorising, not generalising: lower C or γ.",
+        "Plot a validation heatmap over the C by γ grid. The good region is usually a narrow diagonal band, not a single point.",
+        "If training never finishes, the data is too large for a kernel SVM. Move to LinearSVC or SGDClassifier with a hinge loss.",
+        "A model that is perfect on train and poor on test almost always means γ is too high.",
+      ],
+      advantages: [
+        "Maximising the margin gives strong generalisation guarantees and good behaviour on small datasets.",
+        "The kernel trick reaches highly non-linear boundaries without ever materialising the feature space.",
+        "Effective when features outnumber samples, where most models overfit immediately.",
+        "The final model depends only on the support vectors, so it is often compact.",
+        "The optimisation is convex, so there is a single global optimum and no seed sensitivity.",
+      ],
+      limitations: [
+        { name: "Scales badly", note: "training is quadratic to cubic in the number of samples", fix: "LinearSVC, SGDClassifier, or the Nystroem kernel approximation." },
+        { name: "No native probabilities", note: "the output is a signed distance", fix: "Platt scaling, at the cost of an internal cross-validation." },
+        { name: "Very sensitive to C and γ", note: "performance swings wildly across the grid", fix: "systematic joint log-scale search." },
+        { name: "Requires scaling", note: "unscaled features silently wreck the kernel", fix: "standardize inside the pipeline." },
+        { name: "Hard to interpret", note: "with a non-linear kernel there are no coefficients to read", fix: "use a linear kernel, or explain with SHAP." },
+        { name: "Multi-class is bolted on", note: "one-vs-one trains K(K−1)/2 models", fix: "acceptable for few classes; otherwise pick another model." },
+      ],
+      alternatives: [
+        { name: "LinearSVC / SGDClassifier", when: "Same hinge-loss objective, but linear and scalable to millions of rows." },
+        { name: "Gradient boosting", when: "Tabular data, mixed types, and you want feature importances." },
+        { name: "Logistic regression", when: "You need calibrated probabilities and the boundary is close to linear." },
+        { name: "Neural network", when: "Very large datasets where the quadratic training cost is fatal." },
+      ],
+      pitfalls: [
+        { problem: "Training hangs on a large dataset", solution: "Kernel SVM is at least O(m²). Switch to LinearSVC or approximate the kernel with Nystroem." },
+        { problem: "Accuracy is near chance", solution: "Almost always unscaled features. Put StandardScaler in the pipeline." },
+        { problem: "Perfect train accuracy, poor test", solution: "γ or C too large. Move both down a few orders of magnitude." },
+        { problem: "Nearly every point is a support vector", solution: "The model is memorising. Reduce C, reduce γ, or accept the classes are not separable." },
+        { problem: "predict_proba is unavailable", solution: "Construct with probability=True, or rank by decision_function instead." },
+        { problem: "Minority class is ignored", solution: "Set class_weight='balanced'." },
+      ],
+      quickRef: [
+        { name: "Margin width", formula: "2 / ‖w‖" },
+        { name: "Primal (soft)", formula: "min ½‖w‖² + C·Σξᵢ" },
+        { name: "Hinge loss", formula: "max(0, 1 − y·f(x))" },
+        { name: "Dual constraint", formula: "0 ≤ αᵢ ≤ C,  Σαᵢyᵢ = 0" },
+        { name: "Decision function", formula: "f(x) = Σαᵢyᵢ K(xᵢ,x) + b" },
+        { name: "RBF kernel", formula: "K = exp(−γ‖a−b‖²)" },
+        { name: "Poly kernel", formula: "K = (γ·aᵀb + r)^d" },
+        { name: "Support vector", formula: "any point with αᵢ > 0" },
+      ],
+      code: `from sklearn.svm import SVC, LinearSVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import GridSearchCV
+
+# Scaling is mandatory: the kernel is a distance.
+pipe = make_pipeline(StandardScaler(), SVC(kernel="rbf"))
+
+# C and gamma interact, so search them together on a log grid.
+grid = GridSearchCV(
+    pipe,
+    {"svc__C":     [0.1, 1, 10, 100],
+     "svc__gamma": [1e-3, 1e-2, 0.1, "scale"],
+     "svc__class_weight": [None, "balanced"]},
+    cv=5, n_jobs=-1,
+).fit(X_train, y_train)
+
+print(grid.best_params_)
+print("support vectors:", grid.best_estimator_[-1].n_support_)
+
+# Above ~100k rows, drop the kernel and use the linear solver instead.
+fast = make_pipeline(StandardScaler(), LinearSVC(C=1.0, dual="auto"))`,
+      whyChain: [
+        { q: "Why maximise the margin rather than just separate the classes?", a: "Infinitely many hyperplanes separate a separable dataset. The widest-margin one is furthest from every training point, so small perturbations to the data are least likely to flip a prediction. That translates into a tighter generalisation bound." },
+        { q: "What is the kernel trick actually doing?", a: "In the dual, the data appears only as inner products xᵢᵀxⱼ. Replacing that with K(xᵢ,xⱼ) computes the inner product in some higher-dimensional space φ, so you get a linear separator there, which is a curved one here, without ever computing φ(x)." },
+        { q: "Why can RBF handle any boundary?", a: "The RBF kernel corresponds to an infinite-dimensional feature space. With enough support vectors it can approximate any continuous decision boundary, which is also exactly why it overfits so readily." },
+        { q: "What do C and γ each control?", a: "C is the penalty for violating the margin: it trades margin width against training errors. γ is the reach of a single training point in the RBF kernel: large γ makes each point influence only its immediate surroundings, producing tight islands." },
+        { q: "Why is the solution sparse when logistic regression's is not?", a: "Hinge loss is exactly zero once a point is correctly classified beyond the margin, so those points contribute nothing to the gradient and get α = 0. Log-loss is always strictly positive, so every point keeps some influence forever." },
+        { q: "Why does SVM struggle on huge datasets?", a: "The dual has one variable per training sample and the kernel matrix is m by m. Both memory and time grow at least quadratically, so the kernel version becomes impractical well before a linear model does." },
+        { q: "How do you get probabilities out of an SVM?", a: "Platt scaling: fit a one-dimensional logistic regression to the decision-function values on held-out folds. It is a post-hoc patch, not part of the SVM objective." },
+        { q: "Linear or RBF kernel for text?", a: "Linear. Text is already extremely high-dimensional and usually close to linearly separable there, so RBF adds cost and overfitting risk for no gain." },
+      ],
       parameters: [
-        { name: "kernel", effect: "Linear / poly / RBF — controls what shapes of decision boundary are reachable at all." },
+        { name: "kernel", effect: "Linear / poly / RBF - controls what shapes of decision boundary are reachable at all." },
         { name: "C (soft-margin penalty)", effect: "Small C → wider margin, tolerates more training-point violations. Large C → fits training points harder, narrower margin." },
         { name: "γ (RBF)", effect: "How far a single point's influence reaches. Small γ → smooth/far-reaching boundary. Large γ → tight, local boundary (risk of overfitting)." },
         { name: "degree (poly)", effect: "Order of feature interactions the polynomial kernel can represent." },

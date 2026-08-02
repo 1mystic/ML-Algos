@@ -62,7 +62,7 @@
           <div class="control-card">
             <h3>fit</h3>
             <div class="readout" id="db-readout">–</div>
-            <div class="note">No k to choose in advance — clusters emerge from density connectivity, and points too sparse to belong anywhere are left as noise rather than forced into a cluster, unlike K-Means.</div>
+            <div class="note">No k to choose in advance - clusters emerge from density connectivity, and points too sparse to belong anywhere are left as noise rather than forced into a cluster, unlike K-Means.</div>
           </div>
         </div>
       </div>
@@ -145,24 +145,24 @@
   MLApp.register({
     id: "dbscan",
     name: "DBSCAN",
-    category: "Unsupervised — Clustering",
+    category: "Unsupervised - Clustering",
     tagline: "density-connectivity, no fixed k",
     description: "Density-Based Spatial Clustering: groups points that are densely connected through overlapping neighborhoods, and leaves sparse points labeled as noise instead of forcing them into a cluster.",
-    sourceFile: "not in the original repo — added as a commonly-requested density-based clustering method",
+    sourceFile: "not in the original repo - added as a commonly-requested density-based clustering method",
     info: {
-      type: "Unsupervised — Clustering. Density-based, does not require choosing the number of clusters in advance.",
-      scenario: "Clusters have arbitrary (non-spherical) shapes, contain noise/outliers that shouldn't be forced into any cluster, or you don't want to pre-specify k — the classic limitation of K-Means this addresses.",
+      type: "Unsupervised - Clustering. Density-based, does not require choosing the number of clusters in advance.",
+      scenario: "Clusters have arbitrary (non-spherical) shapes, contain noise/outliers that shouldn't be forced into any cluster, or you don't want to pre-specify k - the classic limitation of K-Means this addresses.",
       inputs: "Unlabeled points, a neighborhood radius ε, and a minimum neighborhood size minPts.",
       decisionFunction: {
         text: "cluster(x) = the group reached by chaining together overlapping ε-neighborhoods of core points; unreachable points → noise (label −1)",
         mechanism: "A point is a 'core point' if at least minPts points (including itself) lie within ε of it. Clusters grow by repeatedly absorbing any point within ε of an already-included core point ('density-reachability'); points that are never absorbed this way are labeled noise.",
-        plot: { fn: (r) => 7 / (1 + Math.exp(-(r - 1.5) * 3)), domain: [0, 3], yDomain: [0, 8], color: "var(--accent)", caption: "illustrative: number of points within radius r of a sample point — ε is chosen near where this crosses minPts" },
+        plot: { fn: (r) => 7 / (1 + Math.exp(-(r - 1.5) * 3)), domain: [0, 3], yDomain: [0, 8], color: "var(--accent)", caption: "illustrative: number of points within radius r of a sample point - ε is chosen near where this crosses minPts" },
       },
       lossFunction: {
-        text: "No explicit objective is minimized — a direct, deterministic neighborhood-expansion procedure.",
+        text: "No explicit objective is minimized - a direct, deterministic neighborhood-expansion procedure.",
         mechanism: "Like KNN, DBSCAN has no training loss; ε and minPts are instead chosen by inspecting the resulting clusters/noise ratio, or via a k-distance plot heuristic.",
       },
-      output: "A cluster label (or noise, −1) for every point — the number of clusters is discovered automatically, not specified up front.",
+      output: "A cluster label (or noise, −1) for every point - the number of clusters is discovered automatically, not specified up front.",
       parameters: [
         { name: "ε (eps)", effect: "Neighborhood radius. Too small → almost everything is noise. Too large → distinct clusters merge into one." },
         { name: "minPts", effect: "Minimum neighborhood size to count as a core point. Higher values demand denser regions and are more robust to noise, but can miss small real clusters." },
@@ -179,7 +179,7 @@
           "Neighbors of E: {E} only (everything else is far away) → size 1 < minPts → E is noise.",
           "Expand from A (core): add B. B is core → add its neighbors C, D. C and D are core but their neighbors (B, C, D) are already included.",
         ],
-        result: "Cluster 0 = {A, B, C, D}; E is labeled noise (−1) — found without ever specifying a number of clusters",
+        result: "Cluster 0 = {A, B, C, D}; E is labeled noise (−1) - found without ever specifying a number of clusters",
       },
     },
     mount,

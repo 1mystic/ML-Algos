@@ -129,12 +129,12 @@
   MLApp.register({
     id: "pca",
     name: "Principal Component Analysis",
-    category: "Unsupervised — Dimensionality Reduction",
+    category: "Unsupervised - Dimensionality Reduction",
     tagline: "eigendecomposition of the covariance",
     description: "Finds the orthogonal directions of maximum variance in the data via eigendecomposition of the covariance matrix, and shows what's lost when you project onto just the first component.",
     sourceFile: "mla/pca.py",
     info: {
-      type: "Unsupervised — Dimensionality reduction / linear transformation.",
+      type: "Unsupervised - Dimensionality reduction / linear transformation.",
       scenario: "Compressing correlated features into fewer uncorrelated components, visualizing high-dimensional data, denoising, or as pre-processing before another model.",
       inputs: "A matrix of numeric features X, typically centered (and often standardized) first.",
       decisionFunction: {
@@ -143,26 +143,26 @@
       },
       lossFunction: {
         text: "min Σᵢ ‖xᵢ − reconstruct(project(xᵢ))‖²  (reconstruction error)",
-        mechanism: "Among all rank-k linear projections, PCA's is provably the one minimizing this reconstruction error — solved exactly by eigendecomposition, with no optimization loop.",
+        mechanism: "Among all rank-k linear projections, PCA's is provably the one minimizing this reconstruction error - solved exactly by eigendecomposition, with no optimization loop.",
         plot: { fn: (k) => Math.exp(-0.6 * k), domain: [1, 6], color: "var(--accent)", caption: "typical 'scree plot' shape: variance explained per component usually drops off fast" },
       },
       output: "A lower-dimensional projected representation, plus the principal axes (eigenvectors) and their eigenvalues (variance explained).",
       parameters: [
         { name: "number of components", effect: "How many axes to keep. Fewer = more compression / more information lost." },
-        { name: "standardize features?", effect: "Important when features are on very different scales — otherwise high-variance features dominate the principal axes for reasons unrelated to importance." },
+        { name: "standardize features?", effect: "Important when features are on very different scales - otherwise high-variance features dominate the principal axes for reasons unrelated to importance." },
       ],
       metrics: ["Cumulative % variance explained", "Reconstruction error (MSE)"],
       typicalUses: ["Visualizing high-dimensional data in 2D/3D", "Noise reduction", "Decorrelating features before regression/clustering", "Data compression"],
       workedExample: {
-        setup: "Points (1,2), (3,4), (5,6) — perfectly correlated (they lie exactly on a line). Find PC1.",
+        setup: "Points (1,2), (3,4), (5,6) - perfectly correlated (they lie exactly on a line). Find PC1.",
         steps: [
           "Mean = (3, 4). Deviations: (−2,−2), (0,0), (2,2).",
           "Sxx = (4+0+4)/3 = 2.667, Syy = (4+0+4)/3 = 2.667, Sxy = (4+0+4)/3 = 2.667.",
-          "Covariance matrix = [[2.667, 2.667], [2.667, 2.667]] — trace = 5.333, determinant = 2.667×2.667 − 2.667×2.667 = 0.",
+          "Covariance matrix = [[2.667, 2.667], [2.667, 2.667]] - trace = 5.333, determinant = 2.667×2.667 − 2.667×2.667 = 0.",
           "Determinant 0 means one eigenvalue is 0; since trace = sum of eigenvalues, the other eigenvalue is 5.333.",
-          "The eigenvector for λ=5.333 is the direction (1,1)/√2 — a 45° line.",
+          "The eigenvector for λ=5.333 is the direction (1,1)/√2 - a 45° line.",
         ],
-        result: "PC1 points along (1,1)/√2 and explains 100% of the variance — exactly the line y=x+1 the data lies on, with 0% left for PC2",
+        result: "PC1 points along (1,1)/√2 and explains 100% of the variance - exactly the line y=x+1 the data lies on, with 0% left for PC2",
       },
     },
     mount,

@@ -139,6 +139,36 @@
       type: "Supervised — Regression. Parametric linear model (generalized here with a polynomial basis and an L2/ridge penalty).",
       scenario: "You need a simple, interpretable baseline for predicting a continuous target from numeric features — trend estimation, forecasting with few features, or as a first model before trying anything non-linear.",
       inputs: "A feature value x (expanded into a polynomial basis [1, x, x², …, x^d]) and a continuous target y for each training point.",
+      intuition: {
+        definition: "Fit the straight line (or polynomial curve) that makes the <b>squared vertical distances</b> to the training points as small as possible. Because the loss is a convex quadratic, the best fit has a closed-form solution — no iteration required.",
+        steps: [
+          "Assume the target is a weighted sum of the features plus noise.",
+          "Measure fit by summed squared residuals (y − ŷ)².",
+          "Set the gradient to zero → the normal equations solve for β directly.",
+          "A polynomial basis keeps the model linear in β while bending the curve.",
+        ],
+        applications: [
+          "Sales / demand forecasting from spend and seasonality",
+          "Estimating the price effect of a house's square footage",
+          "Dose–response curves in biology",
+          "Calibrating a sensor against a reference instrument",
+          "A reference baseline before trying any non-linear model",
+        ],
+      },
+      math: [
+        { title: "Design matrix", formula: "X = [1, x, x², …, x^d]  (one row per point)", note: "Polynomial features go in the columns, so the model stays <i>linear in the parameters</i> even when the curve is not." },
+        { title: "Model", formula: "ŷ = Xβ,   y = Xβ + ε,  ε ~ N(0, σ²)", note: "Gaussian noise is what makes least squares the maximum-likelihood estimator." },
+        { title: "Residual sum of squares", formula: "RSS(β) = ‖y − Xβ‖² = Σᵢ(yᵢ − ŷᵢ)²", note: "Convex quadratic bowl in β — one minimum, no local traps." },
+        { title: "Normal equations", formula: "∇RSS = −2Xᵀ(y − Xβ) = 0  ⟹  XᵀXβ = Xᵀy", note: "Setting the gradient to zero gives a linear system." },
+        { title: "Closed-form solution", formula: "β = (XᵀX + λI)⁻¹ Xᵀy", note: "λ = 0 is ordinary least squares. Any λ > 0 (ridge) also makes XᵀX invertible when features are collinear." },
+      ],
+      pipeline: [
+        { label: "Raw feature x", note: "scalar input" },
+        { label: "Basis expansion", note: "[1, x, …, x^d]" },
+        { label: "Normal equations", note: "(XᵀX+λI)⁻¹Xᵀy" },
+        { label: "Coefficients β", note: "fitted once" },
+        { label: "Prediction ŷ", note: "ŷ = xᵀβ", accent: "green" },
+      ],
       decisionFunction: {
         text: "ŷ = β₀ + β₁x + β₂x² + … + β_d·x^d",
         mechanism: "Prediction is a fixed weighted sum of the (possibly polynomial-transformed) input — a direct evaluation, with no iterative inference step once β is fit.",

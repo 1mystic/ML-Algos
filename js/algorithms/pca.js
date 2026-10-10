@@ -1,137 +1,147 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
+  const { ui, col, fmt } = Lab;
+
+  function analyse(pts, standardise) {
+    const X = pts.map((p) => [p.x, p.y]);
+    const mu = MLU.meanVec(X);
+    let Z = X.map((x) => [x[0] - mu[0], x[1] - mu[1]]);
+    let sd = [1, 1];
+    if (standardise) { sd = [0, 1].map((j) => Math.sqrt(MLU.mean(Z.map((z) => z[j] ** 2))) || 1); Z = Z.map((z) => [z[0] / sd[0] * 3, z[1] / sd[1] * 3]); }
+    const C = MLU.covMatrix(Z, [0, 0]);
+    const E = MLU.jacobiEigen(C);
+    let v1 = E.vectors[0]; if (v1[0] < 0) v1 = [-v1[0], -v1[1]];
+    const v2 = [-v1[1], v1[0]];
+    return { mu, Z, C, vals: E.values, v1, v2, sd };
+  }
+  const projVar = (Z, w) => MLU.mean(Z.map((z) => (z[0] * w[0] + z[1] * w[1]) ** 2));
+
+  function buildFrames(pts, standardise) {
+    if (pts.length < 3) return { frames: [{ phase: "idle", title: "Add at least three points", text: "", st: {} }], A: null };
+    const A = analyse(pts, standardise);
+    const tot = A.vals[0] + A.vals[1];
+    const frames = [];
+    frames.push({ phase: "raw", major: true, arch: ["X"], title: "Raw data with its mean (✚)", text: "PCA looks for the directions along which the data varies most. Variance is measured around the mean, so the first job is to centre the cloud.", st: { t: 0 } });
+    for (const t of [0.34, 0.67, 1]) frames.push({ phase: "center", arch: ["X", "center"], title: "Centre the data: subtract the mean", text: `Shifting every point by −μ = (${(-A.mu[0]).toFixed(2)}, ${(-A.mu[1]).toFixed(2)}) puts the mean at the origin.${standardise ? " Standardisation also divides each feature by its standard deviation, so features in large units cannot dominate." : ""}`, tex: standardise ? "z_{ij}=\\frac{x_{ij}-\\mu_j}{\\sigma_j}" : "z_i=x_i-\\mu", st: { t } });
+    frames.push({ phase: "cov", major: true, arch: ["center", "cov"], title: "Covariance matrix: the shape of the cloud", text: `Diagonal entries are each feature's variance; off-diagonals measure how they move together (here ${A.C[0][1] >= 0 ? "positively" : "negatively"} correlated). The ellipse is the 2σ contour of a Gaussian with this covariance.`, tex: `\\Sigma=\\tfrac1n Z^\\top Z=\\begin{bmatrix}${A.C[0][0].toFixed(2)} & ${A.C[0][1].toFixed(2)}\\\\ ${A.C[1][0].toFixed(2)} & ${A.C[1][1].toFixed(2)}\\end{bmatrix}`, st: { t: 1, ell: true } });
+    for (let deg = 0; deg <= 180; deg += 6) {
+      const th = (deg * Math.PI) / 180, w = [Math.cos(th), Math.sin(th)];
+      const v = projVar(A.Z, w);
+      frames.push({ phase: "scan", arch: ["cov", "obj"], title: `Try a direction: θ = ${deg}°`, text: `Project every point onto the line. Variance along it: <b>${v.toFixed(2)}</b> (${((v / tot) * 100).toFixed(0)}% of total). The red sticks are what is lost: their mean square is the reconstruction error, and the two always add up to the total variance, so maximising one minimises the other.`, tex: "\\operatorname{Var}(w)=\\frac1n\\sum_i (w^\\top z_i)^2=w^\\top\\Sigma w,\\qquad \\lVert w\\rVert=1", st: { t: 1, ell: true, w, th: deg } });
+    }
+    const deg1 = ((Math.atan2(A.v1[1], A.v1[0]) * 180) / Math.PI + 180) % 180;
+    frames.push({ phase: "eig", major: true, arch: ["obj", "eig", "sort"], title: `The answer is the top eigenvector: PC1 at ${deg1.toFixed(1)}°`, text: `Maximising wᵀΣw subject to ‖w‖ = 1 gives Σw = λw. PC1 has λ₁ = <b>${A.vals[0].toFixed(2)}</b> (${((A.vals[0] / tot) * 100).toFixed(1)}% of variance); PC2 is orthogonal with λ₂ = <b>${A.vals[1].toFixed(2)}</b>. Arrow lengths are 2√λ.`, tex: "\\Sigma\\,v_k=\\lambda_k v_k,\\qquad \\lambda_1\\ge\\lambda_2,\\qquad \\text{explained ratio}_k=\\frac{\\lambda_k}{\\sum_j\\lambda_j}", st: { t: 1, ell: true, pcs: true, w: A.v1, th: deg1 } });
+    for (const s of [0.25, 0.5, 0.75, 1]) frames.push({ phase: "proj", arch: ["eig", "proj"], title: "Keep 1 component: project onto PC1", text: `Each point is replaced by its coordinate along PC1 (one number instead of two). Reconstruction error: <b>${A.vals[1].toFixed(2)}</b> per point, exactly the discarded eigenvalue.`, tex: "\\hat z_i=(v_1^\\top z_i)\\,v_1,\\qquad \\frac1n\\sum_i\\lVert z_i-\\hat z_i\\rVert^2=\\lambda_2", st: { t: 1, pcs: true, w: A.v1, collapse: s } });
+    frames.push({ phase: "done", major: true, arch: ["proj", "out"], title: "PCA = rotate to the eigenbasis, then drop the small axes", text: "In d dimensions the recipe is identical: the top-k eigenvectors of the covariance span the k-dimensional subspace that keeps the most variance. In practice it is computed with an SVD of the centred data matrix, which is more stable than forming Σ.", tex: "Z=U S V^\\top,\\qquad \\text{PCs}=V,\\qquad \\lambda_k=s_k^2/n", st: { t: 1, pcs: true, w: A.v1, collapse: 1 } });
+    return { frames, A };
+  }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[0]}"></span>data</span>
-              <span class="legend-item"><span class="swatch" style="background:var(--accent)"></span>PC1</span>
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[4]}"></span>PC2</span>
-            </div>
-            <div class="btn-row">
-              <button id="pca-regen">regenerate data</button>
-              <button id="pca-clear">clear</button>
-            </div>
-          </div>
-          <svg id="pca-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click to add points · drag to move them · arrows are the principal axes, scaled by &radic;eigenvalue</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>options</h3>
-            <div class="field"><label><input type="checkbox" id="pca-proj" checked style="width:auto;margin-right:6px" />show projections onto PC1</label></div>
-          </div>
-          <div class="control-card">
-            <h3>variance</h3>
-            <div class="readout" id="pca-readout">–</div>
-            <div class="note">Eigendecomposition of the centered covariance matrix (via Jacobi rotation). PC1 is the direction of maximum variance; projecting onto it is the best 1D lossy compression of this data.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#pca-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    function genData() {
-      const angle = MLU.randRange(0, Math.PI);
-      const n = 60, pts = [];
-      const cx = MLU.randRange(-2, 2), cy = MLU.randRange(-2, 2);
-      for (let i = 0; i < n; i++) {
-        const a = MLU.randn() * 4, b = MLU.randn() * 1.1;
-        pts.push({
-          x: cx + a * Math.cos(angle) - b * Math.sin(angle),
-          y: cy + a * Math.sin(angle) + b * Math.cos(angle),
-        });
-      }
-      return pts;
-    }
-    let points = genData();
-
-    const projG = svg.append("g");
-    const axesG = svg.append("g");
-    const ptsG = svg.append("g");
-
-    function render() {
-      let mu = { x: 0, y: 0 }, eig = { values: [1, 0], vectors: [[1, 0], [0, 1]] };
-      if (points.length >= 2) {
-        mu = MLU.meanVec(points.map((p) => [p.x, p.y]));
-        mu = { x: mu[0], y: mu[1] };
-        const cov = MLU.covMatrix(points.map((p) => [p.x, p.y]), [mu.x, mu.y]);
-        eig = MLU.jacobiEigen(cov);
-      }
-      const showProj = document.getElementById("pca-proj").checked;
-
-      if (showProj && points.length >= 2) {
-        const [v0, v1] = eig.vectors[0];
-        const projLines = points.map((p) => {
-          const dx = p.x - mu.x, dy = p.y - mu.y;
-          const t = dx * v0 + dy * v1;
-          return { x1: p.x, y1: p.y, x2: mu.x + t * v0, y2: mu.y + t * v1 };
-        });
-        const sel = projG.selectAll("line").data(projLines);
-        sel.enter().append("line").attr("stroke", "var(--text-faint)").attr("stroke-width", 1).attr("stroke-dasharray", "2,2")
-          .merge(sel).attr("x1", (d) => x(d.x1)).attr("y1", (d) => y(d.y1)).attr("x2", (d) => x(d.x2)).attr("y2", (d) => y(d.y2));
-        sel.exit().remove();
-      } else projG.selectAll("line").remove();
-
-      const arrows = points.length >= 2 ? [
-        { v: eig.vectors[0], val: eig.values[0], color: "var(--accent)" },
-        { v: eig.vectors[1], val: eig.values[1], color: MLU.palette[4] },
-      ] : [];
-      const asel = axesG.selectAll("line.axis").data(arrows);
-      asel.enter().append("line").attr("class", "axis").attr("stroke-width", 2.5)
-        .merge(asel)
-        .attr("x1", (d) => x(mu.x - d.v[0] * Math.sqrt(Math.max(d.val, 0))))
-        .attr("y1", (d) => y(mu.y - d.v[1] * Math.sqrt(Math.max(d.val, 0))))
-        .attr("x2", (d) => x(mu.x + d.v[0] * Math.sqrt(Math.max(d.val, 0))))
-        .attr("y2", (d) => y(mu.y + d.v[1] * Math.sqrt(Math.max(d.val, 0))))
-        .attr("stroke", (d) => d.color);
-      asel.exit().remove();
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 5).attr("fill", MLU.palette[0]).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y))
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-
-      const total = eig.values[0] + eig.values[1] || 1;
-      document.getElementById("pca-readout").innerHTML = points.length >= 2
-        ? `points: <b>${points.length}</b><br>PC1 explains: <b class="num">${((eig.values[0] / total) * 100).toFixed(1)}%</b><br>PC2 explains: <b class="num">${((eig.values[1] / total) * 100).toFixed(1)}%</b>`
-        : "add at least 2 points";
-    }
-
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py) });
-      render();
+    const lab = Lab.studio(root, {
+      id: "pca", fps: 4,
+      legend: ui.legend([["var(--accent)", "candidate direction", "line"], ["var(--series-2)", "residual", "line"], ["var(--series-1)", "PC1"], ["var(--series-5)", "PC2"]]),
+      tools: ui.btn("replay", "replay", true),
+      hint: "click to add points · drag / double-click to edit",
+      data: {
+        kind: "cluster", presets: ["corr", "line", "aniso", "blobs2", "uniform", "moons"], def: "corr", n: 80, noise: 0.3, names: { corr: "correlated Gaussian", line: "nearly one-dimensional" },
+        custom: {
+          corr: ({ n, noise }) => Array.from({ length: n }, () => { const a = MLU.randn() * 3.6, b = MLU.randn() * (0.6 + noise * 2.4); return { x: 1 + a * 0.83 - b * 0.56, y: -0.5 + a * 0.56 + b * 0.83, label: 0 }; }),
+          line: ({ n, noise }) => Array.from({ length: n }, () => { const a = MLU.randRange(-8, 8), b = MLU.randn() * (0.15 + noise * 0.8); return { x: a * 0.94 - b * 0.34, y: a * 0.34 + b * 0.94 - 1, label: 0 }; }),
+        },
+      },
+      side: [{ title: "options", html: ui.check("std", "standardise features first", false) + ui.check("resid", "show residual sticks", true) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "X", label: "X", sub: "n × d", x: 30, y: 44, w: 48, kind: "data" },
+          { id: "center", label: "centre", sub: "X − μ", x: 112, y: 44, kind: "op" },
+          { id: "cov", label: "Σ = ZᵀZ / n", sub: "covariance", x: 222, y: 44, kind: "op" },
+          { id: "obj", label: "max wᵀΣw", sub: "‖w‖ = 1", x: 330, y: 44, kind: "loss" },
+          { id: "eig", label: "eigendecompose", sub: "Σv = λv", x: 300, y: 120, kind: "op" },
+          { id: "sort", label: "sort by λ", sub: "keep top k", x: 170, y: 120, kind: "param" },
+          { id: "proj", label: "Z·V_k", sub: "project", x: 60, y: 120, kind: "op" },
+          { id: "out", label: "scores", sub: "n × k", x: 60, y: 172, kind: "out" },
+        ],
+        edges: [{ from: "X", to: "center" }, { from: "center", to: "cov" }, { from: "cov", to: "obj" }, { from: "obj", to: "eig" }, { from: "eig", to: "sort" }, { from: "sort", to: "proj" }, { from: "proj", to: "out" }],
+      },
+      phases: { raw: { label: "raw data", color: 3 }, center: { label: "centre", color: 3 }, cov: { label: "covariance", color: 4 }, scan: { label: "direction scan", color: 0 }, eig: { label: "eigenvectors", color: 2 }, proj: { label: "project", color: 2 }, done: { label: "done", color: 2 } },
+      panels: [{ id: "cov", title: "covariance matrix & explained variance" }],
+      charts: [{ id: "var", title: "variance captured vs lost, by direction θ", custom: true }],
+      onFrame: render, onData: () => replay(),
     });
-    document.getElementById("pca-proj").addEventListener("change", render);
-    document.getElementById("pca-regen").addEventListener("click", () => { points = genData(); render(); });
-    document.getElementById("pca-clear").addEventListener("click", () => { points = []; render(); });
-
-    render();
-    return () => {};
+    lab.editable({ newPoint: (x, y) => ({ x, y, label: 0 }), onChange: () => replay({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    let A = null, VP = null;
+    function replay({ at = "start" } = {}) {
+      const r = buildFrames(lab.points, lab.val("std"));
+      A = r.A;
+      drawVar(); drawCov();
+      lab.load(r.frames, { at, play: at === "start" });
+    }
+    function drawVar() {
+      const el = lab.charts.var.el; el.innerHTML = "";
+      if (!A) return;
+      const tot = A.vals[0] + A.vals[1];
+      VP = Lab.xy(el, { w: 360, h: 130, xd: [0, 180], yd: [0, tot * 1.05], xLabel: "θ (deg)" });
+      const th = d3.range(0, 180.5, 2);
+      VP.line("cap", th.map((t) => [t, projVar(A.Z, [Math.cos((t * Math.PI) / 180), Math.sin((t * Math.PI) / 180)])]), { color: "var(--series-1)" });
+      VP.line("lost", th.map((t) => [t, tot - projVar(A.Z, [Math.cos((t * Math.PI) / 180), Math.sin((t * Math.PI) / 180)])]), { color: "var(--series-2)", dash: "4 3" });
+      el.closest(".lab-card").querySelector(".chart-legend").innerHTML = `<span class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>variance kept</span><span class="legend-item"><span class="swatch" style="background:var(--series-2)"></span>reconstruction error</span>`;
+    }
+    function drawCov() {
+      const el = lab.R("panel-cov"); el.innerHTML = `<div style="display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:center"><div data-m></div><div data-b></div></div>`;
+      if (!A) return;
+      Lab.matrix(el.querySelector("[data-m]"), { cell: 50, rowLabels: ["x", "y"], colLabels: ["x", "y"], labelW: 16 }).set(A.C);
+      const tot = A.vals[0] + A.vals[1];
+      Lab.bars(el.querySelector("[data-b]"), { w: 240, h: 120, yd: [0, 1] }).set([{ label: "PC1", value: A.vals[0] / tot, color: "var(--series-1)", text: ((A.vals[0] / tot) * 100).toFixed(1) + "%" }, { label: "PC2", value: A.vals[1] / tot, color: "var(--series-5)", text: ((A.vals[1] / tot) * 100).toFixed(1) + "%" }]);
+    }
+    const ellG = L.mid.append("g"), dirG = L.mid.append("g"), pcG = L.top.append("g"), muG = L.top.append("g");
+    const defs = pl.svg.append("defs");
+    for (const [id, c] of [["pca-a1", "var(--series-1)"], ["pca-a2", "var(--series-5)"]]) defs.append("marker").attr("id", id).attr("viewBox", "0 0 10 10").attr("refX", 8).attr("refY", 5).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto").append("path").attr("d", "M0,0L10,5L0,10z").attr("fill", c);
+    function render(f) {
+      const st = f.st;
+      ellG.selectAll("*").remove(); dirG.selectAll("*").remove(); pcG.selectAll("*").remove(); muG.selectAll("*").remove(); L.links.selectAll("*").remove();
+      if (!A) { lab.drawPoints({}); return; }
+      const raw = lab.points.map((p) => [p.x, p.y]);
+      const pos = A.Z.map((z, i) => {
+        let q = [raw[i][0] + (z[0] - raw[i][0]) * st.t, raw[i][1] + (z[1] - raw[i][1]) * st.t];
+        if (st.collapse) { const s = z[0] * A.v1[0] + z[1] * A.v1[1]; const pr = [s * A.v1[0], s * A.v1[1]]; q = [z[0] + (pr[0] - z[0]) * st.collapse, z[1] + (pr[1] - z[1]) * st.collapse]; }
+        return q;
+      });
+      const m = [A.mu[0] * (1 - st.t), A.mu[1] * (1 - st.t)];
+      muG.append("path").attr("d", d3.symbol(d3.symbolCross, 170)()).attr("transform", `translate(${pl.x(m[0])},${pl.y(m[1])})`).attr("fill", "var(--accent)").attr("stroke", "var(--bg)");
+      if (st.ell) ellG.append("path").attr("d", Lab.ellipsePath(pl, [0, 0], A.C, 2)).attr("fill", "var(--series-1)").attr("fill-opacity", 0.05).attr("stroke", "var(--text-faint)").attr("stroke-dasharray", "5 4");
+      if (st.w && !st.collapse) {
+        const w = st.w;
+        dirG.append("line").attr("x1", pl.x(-w[0] * 15)).attr("y1", pl.y(-w[1] * 15)).attr("x2", pl.x(w[0] * 15)).attr("y2", pl.y(w[1] * 15)).attr("stroke", "var(--accent)").attr("stroke-width", 2);
+        if (lab.val("resid")) A.Z.forEach((z) => { const s = z[0] * w[0] + z[1] * w[1]; L.links.append("line").attr("x1", pl.x(z[0])).attr("y1", pl.y(z[1])).attr("x2", pl.x(s * w[0])).attr("y2", pl.y(s * w[1])).attr("stroke", "var(--series-2)").attr("stroke-opacity", 0.55); });
+        A.Z.forEach((z) => { const s = z[0] * w[0] + z[1] * w[1]; dirG.append("circle").attr("cx", pl.x(s * w[0])).attr("cy", pl.y(s * w[1])).attr("r", 2.2).attr("fill", "var(--accent)"); });
+      }
+      if (st.pcs) {
+        [[A.v1, A.vals[0], "pca-a1", "var(--series-1)", "PC1"], [A.v2, A.vals[1], "pca-a2", "var(--series-5)", "PC2"]].forEach(([v, lam, mk, c, t]) => {
+          const L2 = 2 * Math.sqrt(lam);
+          pcG.append("line").attr("x1", pl.x(0)).attr("y1", pl.y(0)).attr("x2", pl.x(v[0] * L2)).attr("y2", pl.y(v[1] * L2)).attr("stroke", c).attr("stroke-width", 3.2).attr("marker-end", `url(#${mk})`);
+          pcG.append("text").attr("class", "lbl-strong halo").attr("x", pl.x(v[0] * (L2 + 0.8))).attr("y", pl.y(v[1] * (L2 + 0.8))).attr("text-anchor", "middle").text(t);
+        });
+      }
+      const sel = lab.drawPoints({ color: "var(--series-1)", opacity: st.collapse ? 0.85 : 0.8, edit: st.t === 0 });
+      sel.attr("cx", (d, i) => pl.x(pos[i][0])).attr("cy", (d, i) => pl.y(pos[i][1]));
+      if (VP) VP.vline(st.th != null ? st.th : null);
+      const tot = A.vals[0] + A.vals[1];
+      lab.readout(`<div class="kv"><span>λ₁ · λ₂</span><b>${fmt(A.vals[0], 2)} · ${fmt(A.vals[1], 2)}</b><span>PC1 explains</span><b>${((A.vals[0] / tot) * 100).toFixed(1)}%</b><span>PC1 direction</span><b>(${fmt(A.v1[0], 2)}, ${fmt(A.v1[1], 2)})</b></div>`);
+    }
+    lab.watch(["std"], () => replay({ at: "end" }));
+    lab.watch(["resid"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="replay"]').onclick = () => replay();
+    lab.loadPreset("corr");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "pca",
     name: "Principal Component Analysis",
     category: "Unsupervised - Dimensionality Reduction",
-    tagline: "eigendecomposition of the covariance",
-    description: "Finds the orthogonal directions of maximum variance in the data via eigendecomposition of the covariance matrix, and shows what's lost when you project onto just the first component.",
+    tagline: "variance-maximising rotation, step by step",
+    description: "Centre the data, build the covariance matrix, then sweep a direction around the circle to watch variance kept and reconstruction error trade off, until the eigenvector appears at the peak and the cloud collapses onto PC1.",
     info: {
       type: "Unsupervised - Dimensionality reduction / linear transformation.",
       scenario: "Compressing correlated features into fewer uncorrelated components, visualizing high-dimensional data, denoising, or as pre-processing before another model.",

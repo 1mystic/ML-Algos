@@ -1,153 +1,126 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-  const NOISE = -1, UNVISITED = -2;
+  const { ui, col, fmt } = Lab;
+  const UNVIS = -2, NOISE = -1;
 
-  function regionQuery(points, i, eps2) {
-    const neigh = [];
-    for (let j = 0; j < points.length; j++) if (MLU.dist2(points[i], points[j]) <= eps2) neigh.push(j);
-    return neigh; // includes i itself
-  }
-  function runDBSCAN(points, eps, minPts) {
-    const n = points.length;
-    const labels = new Array(n).fill(UNVISITED);
-    const eps2 = eps * eps;
-    let cluster = 0;
+  function buildFrames(pts, eps, minPts) {
+    const n = pts.length;
+    if (!n) return [{ phase: "idle", title: "No data", text: "", st: { lab: [], core: [] } }];
+    const nb = pts.map((p) => { const r = []; for (let j = 0; j < n; j++) if (Math.hypot(p.x - pts[j].x, p.y - pts[j].y) <= eps) r.push(j); return r; });
+    const core = nb.map((r) => r.length >= minPts);
+    const labels = new Array(n).fill(UNVIS);
+    const frames = [];
+    const snap = (extra) => ({ lab: labels.slice(), core, ...extra });
+    frames.push({ phase: "core", major: true, arch: ["data", "rq", "core"], title: `Core points: at least ${minPts} neighbours within ε = ${eps.toFixed(2)}`, text: `Count each point's ε-neighbourhood (itself included). <b>${core.filter(Boolean).length}</b> of ${n} points are <b>core</b> (large dots): they sit in dense regions. Clusters will be grown only through core points.`, tex: "N_\\varepsilon(p)=\\{q:\\lVert p-q\\rVert\\le\\varepsilon\\},\\qquad p\\text{ is core}\\iff |N_\\varepsilon(p)|\\ge \\text{minPts}", st: snap({ showCore: true }), m: { clusters: 0, noise: 0 } });
+    let C = 0, pendingNoise = [];
+    const flushNoise = () => {
+      if (!pendingNoise.length) return;
+      frames.push({ phase: "noise", arch: ["rq", "noise"], title: `${pendingNoise.length} non-core point${pendingNoise.length > 1 ? "s" : ""} not reachable yet → tentatively noise`, text: "A point that is not core and not yet claimed by any cluster is marked noise. It can still be adopted later as a <b>border</b> point if a cluster's expansion reaches it.", st: snap({ focus: pendingNoise.slice() }), m: stats() });
+      pendingNoise = [];
+    };
+    const stats = () => ({ clusters: C, noise: labels.filter((l) => l === NOISE).length });
     for (let i = 0; i < n; i++) {
-      if (labels[i] !== UNVISITED) continue;
-      const neighbors = regionQuery(points, i, eps2);
-      if (neighbors.length < minPts) { labels[i] = NOISE; continue; }
-      labels[i] = cluster;
-      const seeds = neighbors.filter((j) => j !== i);
-      for (let s = 0; s < seeds.length; s++) {
-        const j = seeds[s];
-        if (labels[j] === NOISE) labels[j] = cluster;
-        if (labels[j] !== UNVISITED) continue;
-        labels[j] = cluster;
-        const jNeighbors = regionQuery(points, j, eps2);
-        if (jNeighbors.length >= minPts) for (const k of jNeighbors) if (!seeds.includes(k)) seeds.push(k);
+      if (labels[i] !== UNVIS) continue;
+      if (!core[i]) { labels[i] = NOISE; pendingNoise.push(i); continue; }
+      flushNoise();
+      labels[i] = C;
+      frames.push({ phase: "seed", major: true, arch: ["core", "expand"], title: `New cluster ${C} seeded at core point #${i}`, text: "An unvisited core point starts a new cluster. Everything density-reachable from it will join.", st: snap({ cur: i, circles: [i] }), m: stats() });
+      let wave = nb[i].filter((j) => j !== i), wn = 1;
+      for (const j of wave) if (labels[j] === UNVIS || labels[j] === NOISE) labels[j] = C;
+      while (wave.length) {
+        const next = new Set();
+        for (const j of wave) if (core[j]) for (const q of nb[j]) if (labels[q] === UNVIS || labels[q] === NOISE) { labels[q] = C; next.add(q); }
+        frames.push({ phase: "expand", arch: ["expand", "border"], title: `Cluster ${C}: expansion wave ${wn} adds ${wave.length} point${wave.length > 1 ? "s" : ""}`, text: `Breadth-first search: every newly reached <b>core</b> point contributes its own ε-neighbourhood (circles); reached non-core points become <b>border</b> points and stop the spread there.`, st: snap({ wave: wave.slice(), circles: wave.filter((j) => core[j]) }), m: stats() });
+        wave = [...next]; wn++;
       }
-      cluster++;
+      C++;
     }
-    return { labels, nClusters: cluster };
-  }
-  function isCore(points, i, labels, eps, minPts) {
-    return regionQuery(points, i, eps * eps).length >= minPts;
+    flushNoise();
+    frames.push({ phase: "done", major: true, arch: ["out"], title: `Done: ${C} cluster${C === 1 ? "" : "s"}, ${labels.filter((l) => l === NOISE).length} noise points`, text: "No k was given: the number of clusters fell out of the density threshold. Clusters can take any shape. Note the weakness: one global ε cannot fit clusters of very different density (try the varied-density data).", st: snap({}), m: stats() });
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">clusters found: <b id="db-nclusters">0</b> · noise points: <b id="db-noise">0</b></span></div>
-            <div class="btn-row">
-              <button id="db-preset-blobs">blob data</button>
-              <button id="db-preset-moons">arbitrary-shape data</button>
-              <button id="db-clear">clear</button>
-            </div>
-          </div>
-          <svg id="db-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click to add points · hover a point to preview its &epsilon;-neighborhood · filled = core, ring = border, × = noise</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>&epsilon; (neighborhood radius) <span class="val" id="db-eps-val">1.2</span></h3>
-            <input type="range" id="db-eps" min="3" max="40" step="1" value="12" />
-          </div>
-          <div class="control-card">
-            <h3>minPts <span class="val" id="db-minpts-val">4</span></h3>
-            <input type="range" id="db-minpts" min="2" max="12" step="1" value="4" />
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="db-readout">–</div>
-            <div class="note">No k to choose in advance - clusters emerge from density connectivity, and points too sparse to belong anywhere are left as noise rather than forced into a cluster, unlike K-Means.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#db-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    function presetBlobs() {
-      const pts = MLU.makeBlobs({ n: 70, clusters: 3, spread: 0.7 }).map((p) => ({ x: p.x, y: p.y }));
-      for (let i = 0; i < 8; i++) pts.push({ x: MLU.randRange(...DOMAIN), y: MLU.randRange(...DOMAIN) });
-      return pts;
-    }
-    function presetMoons() {
-      const pts = [];
-      for (let i = 0; i < 45; i++) { const a = MLU.randRange(0, Math.PI); pts.push({ x: 5 * Math.cos(a) + MLU.randn() * 0.3, y: 5 * Math.sin(a) + MLU.randn() * 0.3 - 1 }); }
-      for (let i = 0; i < 45; i++) { const a = MLU.randRange(0, Math.PI); pts.push({ x: 5 * Math.cos(a) + MLU.randn() * 0.3 + 3, y: -5 * Math.sin(a) + MLU.randn() * 0.3 + 2 }); }
-      return pts;
-    }
-    let points = presetBlobs();
-
-    const eyeCircle = svg.append("circle").attr("r", 0).attr("fill", "none").attr("stroke", "var(--text-faint)").attr("stroke-dasharray", "3,3");
-    const ptsG = svg.append("g");
-
-    function eps() { return +document.getElementById("db-eps").value / 10; }
-    function minPts() { return +document.getElementById("db-minpts").value; }
-
-    function render() {
-      document.getElementById("db-eps-val").textContent = eps().toFixed(1);
-      document.getElementById("db-minpts-val").textContent = minPts();
-      const { labels, nClusters } = runDBSCAN(points, eps(), minPts());
-      const noiseCount = labels.filter((l) => l === NOISE).length;
-      document.getElementById("db-nclusters").textContent = nClusters;
-      document.getElementById("db-noise").textContent = noiseCount;
-      document.getElementById("db-readout").innerHTML = `points: <b>${points.length}</b><br>clusters: <b class="num">${nClusters}</b><br>noise: <b class="num">${noiseCount}</b> (${points.length ? ((noiseCount / points.length) * 100).toFixed(0) : 0}%)`;
-
-      const data = points.map((p, i) => ({ ...p, label: labels[i], core: isCore(points, i, labels, eps(), minPts()) }));
-      const sel = ptsG.selectAll("g.pt").data(data);
-      const enter = sel.enter().append("g").attr("class", "pt");
-      enter.append("circle").attr("class", "dot").attr("r", 5.5);
-      enter.append("path").attr("class", "noise-x").attr("d", "M-4,-4 L4,4 M4,-4 L-4,4").attr("stroke-width", 1.6);
-      const merged = enter.merge(sel);
-      merged.attr("transform", (d) => `translate(${x(d.x)},${y(d.y)})`).style("cursor", "grab");
-      merged.select(".dot")
-        .style("opacity", (d) => (d.label === NOISE ? 0 : 1))
-        .attr("fill", (d) => (d.core ? MLU.palette[((d.label % MLU.palette.length) + MLU.palette.length) % MLU.palette.length] : "none"))
-        .attr("stroke", (d) => MLU.palette[((d.label % MLU.palette.length) + MLU.palette.length) % MLU.palette.length])
-        .attr("stroke-width", 1.6);
-      merged.select(".noise-x").style("opacity", (d) => (d.label === NOISE ? 1 : 0)).attr("stroke", "var(--text-faint)");
-      merged
-        .on("mouseenter", (event, d) => { eyeCircle.attr("cx", x(d.x)).attr("cy", y(d.y)).attr("r", Math.abs(x(eps()) - x(0))).style("opacity", 1); })
-        .on("mouseleave", () => eyeCircle.style("opacity", 0))
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-    }
-
-    svg.on("click", (event) => {
-      if (event.target.closest(".pt")) return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py) });
-      render();
+    const lab = Lab.studio(root, {
+      id: "dbscan", fps: 2.5,
+      legend: ui.legend([["var(--text)", "core (large)"], ["var(--text-faint)", "noise ×"], ["var(--series-4)", "ε-neighbourhood", "ring"]]),
+      tools: ui.btn("replay", "replay", true),
+      hint: "click to add points · drag / double-click to edit · click the k-distance chart to set ε",
+      data: { kind: "cluster", presets: ["moons", "circles", "blobs3", "varied", "outliers", "spiral", "uniform"], def: "moons", n: 180, noise: 0.15 },
+      side: [{ title: "density", html: ui.range("eps", "ε (radius)", 0.3, 4, 0.05, 1.2) + ui.range("mp", "minPts", 2, 15, 1, 5) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "data", label: "points", x: 40, y: 40, w: 62, kind: "data" },
+          { id: "rq", label: "region query", sub: "N_ε(p)", x: 150, y: 40, kind: "op" },
+          { id: "core", label: "core?", sub: "|N_ε| ≥ minPts", x: 280, y: 40, kind: "loss" },
+          { id: "expand", label: "expand cluster", sub: "BFS via cores", x: 280, y: 112, kind: "op" },
+          { id: "border", label: "border", sub: "reached, not core", x: 150, y: 112, kind: "param" },
+          { id: "noise", label: "noise", sub: "unreachable", x: 52, y: 112, w: 70, kind: "param" },
+          { id: "out", label: "labels", sub: "clusters + noise", x: 216, y: 170, kind: "out" },
+        ],
+        edges: [{ from: "data", to: "rq" }, { from: "rq", to: "core" }, { from: "core", to: "expand", label: "yes" }, { from: "expand", to: "border" }, { from: "rq", to: "noise", label: "no" }, { from: "expand", to: "out" }],
+      },
+      phases: { core: { label: "core points", color: 3 }, seed: { label: "new cluster", color: 0 }, expand: { label: "expand", color: 2 }, noise: { label: "noise", color: 1 }, done: { label: "done", color: 2 } },
+      charts: [{ id: "kd", title: "k-distance plot (choosing ε)", custom: true, note: "Each point's distance to its minPts-th nearest neighbour, sorted. The knee marks a good ε: below it, points sit in dense regions." }, { id: "cnt", title: "clusters & noise", series: [{ key: "clusters", label: "clusters", color: "var(--series-1)", digits: 0 }, { key: "noise", label: "noise", color: "var(--series-2)", dash: "4 3", digits: 0 }] }],
+      onFrame: render, onData: () => replay(),
     });
-    document.getElementById("db-eps").addEventListener("input", render);
-    document.getElementById("db-minpts").addEventListener("input", render);
-    document.getElementById("db-preset-blobs").addEventListener("click", () => { points = presetBlobs(); render(); });
-    document.getElementById("db-preset-moons").addEventListener("click", () => { points = presetMoons(); render(); });
-    document.getElementById("db-clear").addEventListener("click", () => { points = []; render(); });
-
-    render();
-    return () => {};
+    lab.editable({ newPoint: (x, y) => ({ x, y, label: 0 }), onChange: () => replay({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    function replay({ at = "start" } = {}) { lab.load(buildFrames(lab.points, lab.val("eps"), lab.val("mp")), { at, play: at === "start" }); drawKD(); }
+    function drawKD() {
+      const el = lab.charts.kd.el; el.innerHTML = "";
+      const k = lab.val("mp"), pts = lab.points;
+      if (pts.length <= k) return;
+      const kd = pts.map((p) => pts.map((q) => Math.hypot(p.x - q.x, p.y - q.y)).sort((a, b) => a - b)[Math.min(k - 1, pts.length - 1)]).sort((a, b) => a - b);
+      const P = Lab.xy(el, { w: 360, h: 130, xd: [0, kd.length - 1], yd: [0, Math.max(...kd) * 1.05], xLabel: "points sorted", yLabel: "dist" });
+      P.line("kd", kd.map((v, i) => [i, v]), { color: "var(--series-5)" });
+      P.top.append("line").attr("x1", P.m.l).attr("x2", P.w - P.m.r).attr("y1", P.y(lab.val("eps"))).attr("y2", P.y(lab.val("eps"))).attr("stroke", "var(--series-4)").attr("stroke-dasharray", "5 4").attr("stroke-width", 1.6);
+      P.svg.style("cursor", "crosshair").on("click", (ev) => {
+        const [, py] = d3.pointer(ev);
+        const v = Math.max(0.3, Math.min(4, P.y.invert(py)));
+        lab.ctl("eps").value = v.toFixed(2); lab.ctl("eps").dispatchEvent(new Event("input")); lab.ctl("eps").dispatchEvent(new Event("change"));
+      });
+      el.closest(".lab-card").querySelector(".chart-legend").innerHTML = `ε = <b>${lab.val("eps").toFixed(2)}</b>`;
+    }
+    const circG = L.mid.append("g"), noiseG = L.top.append("g");
+    function render(f) {
+      const st = f.st;
+      if (!st.lab.length) { lab.drawPoints({}); return; }
+      const eps = lab.val("eps");
+      circG.selectAll("*").remove();
+      for (const i of st.circles || []) {
+        const p = lab.points[i];
+        circG.append("ellipse").attr("cx", pl.x(p.x)).attr("cy", pl.y(p.y)).attr("rx", pl.x(eps) - pl.x(0)).attr("ry", pl.y(0) - pl.y(eps)).attr("fill", "var(--series-4)").attr("fill-opacity", 0.06).attr("stroke", "var(--series-4)").attr("stroke-opacity", 0.7).attr("stroke-width", 1.2);
+      }
+      const wave = new Set(st.wave || []), focus = new Set(st.focus || []);
+      const visible = lab.points.map((_, i) => st.lab[i] !== NOISE);
+      lab.drawPoints({
+        pts: lab.points,
+        color: (d, i) => (st.lab[i] >= 0 ? col(st.lab[i]) : st.lab[i] === NOISE ? "transparent" : st.showCore && st.core[i] ? "var(--text-dim)" : "var(--text-faint)"),
+        r: (d, i) => (st.core[i] ? 5.2 : 3.2),
+        stroke: (d, i) => (wave.has(i) || i === st.cur ? "var(--accent)" : st.lab[i] === NOISE ? "transparent" : "var(--bg)"),
+        sw: (d, i) => (wave.has(i) || i === st.cur ? 2 : 1), opacity: (d, i) => (st.lab[i] === UNVIS && !st.showCore ? 0.45 : 1),
+      });
+      const nz = noiseG.selectAll("path").data(lab.points.map((p, i) => ({ p, i })).filter((d) => st.lab[d.i] === NOISE));
+      nz.exit().remove();
+      nz.enter().append("path").attr("d", "M-4,-4L4,4M-4,4L4,-4").attr("pointer-events", "none").merge(nz)
+        .attr("transform", (d) => `translate(${pl.x(d.p.x)},${pl.y(d.p.y)})`).attr("stroke", (d) => (focus.has(d.i) ? "var(--series-2)" : "var(--text-faint)")).attr("stroke-width", (d) => (focus.has(d.i) ? 2.4 : 1.6));
+      const nC = new Set(st.lab.filter((l) => l >= 0)).size;
+      const border = st.lab.filter((l, i) => l >= 0 && !st.core[i]).length;
+      lab.readout(`<div class="kv"><span>clusters</span><b>${nC}</b><span>core points</span><b>${st.core.filter(Boolean).length}</b><span>border points</span><b>${border}</b><span>noise</span><b>${st.lab.filter((l) => l === NOISE).length}</b></div>`);
+    }
+    lab.watch(["eps", "mp"], () => replay({ at: "end" }), { format: { eps: (v) => (+v).toFixed(2) } });
+    lab.q('[data-b="replay"]').onclick = () => replay();
+    lab.loadPreset("moons");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "dbscan",
     name: "DBSCAN",
     category: "Unsupervised - Clustering",
-    tagline: "density-connectivity, no fixed k",
-    description: "Density-Based Spatial Clustering: groups points that are densely connected through overlapping neighborhoods, and leaves sparse points labeled as noise instead of forcing them into a cluster.",
+    tagline: "core points, BFS expansion, noise",
+    description: "Density-based clustering with no k. Watch core points get identified, clusters spread outward wave by wave through ε-neighbourhoods, border points get adopted and noise get marked; choose ε from the k-distance plot.",
     info: {
       type: "Unsupervised - Clustering. Density-based, does not require choosing the number of clusters in advance.",
       scenario: "Clusters have arbitrary (non-spherical) shapes, contain noise/outliers that shouldn't be forced into any cluster, or you don't want to pre-specify k - the classic limitation of K-Means this addresses.",

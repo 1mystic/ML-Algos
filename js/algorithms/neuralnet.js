@@ -1,159 +1,197 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
+  const { ui, col, fmt } = Lab;
+  const MAXF = 360;
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[0]}"></span>class 0</span>
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[1]}"></span>class 1</span>
-              <span class="stage-hint">epoch <b id="nn-epoch">0</b></span>
-            </div>
-            <div class="btn-row">
-              <button id="nn-train" class="primary">train</button>
-              <button id="nn-reset">reset weights</button>
-              <button id="nn-preset-xor">XOR data</button>
-              <button id="nn-preset-circles">circular data</button>
-            </div>
-          </div>
-          <svg id="nn-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click class 0 / shift-click class 1 to add points · this is a real net training live via TensorFlow.js</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>architecture</h3>
-            <div class="field"><label>hidden layer 1 units <span class="val" id="nn-h1-val">8</span></label>
-              <input type="range" id="nn-h1" min="1" max="16" step="1" value="8" /></div>
-            <div class="field"><label>hidden layer 2 units <span class="val" id="nn-h2-val">8</span></label>
-              <input type="range" id="nn-h2" min="0" max="16" step="1" value="8" /></div>
-            <div class="field"><label>activation</label>
-              <select id="nn-act"><option value="relu">relu</option><option value="tanh">tanh</option></select></div>
-            <div class="field"><label>learning rate <span class="val" id="nn-lr-val">0.03</span></label>
-              <input type="range" id="nn-lr" min="1" max="30" step="1" value="8" /></div>
-          </div>
-          <div class="control-card">
-            <h3>training</h3>
-            <div class="readout" id="nn-readout">–</div>
-            <div class="note">Feed-forward MLP with backprop via TensorFlow.js autodiff (Adam + binary cross-entropy), trained continuously in the browser. Changing the architecture rebuilds the network.</div>
-          </div>
-        </div>
-      </div>
-    `;
+    const lab = Lab.studio(root, {
+      id: "mlp", fps: 12, classes: 2,
+      legend: ui.legend([["var(--text-faint)", "test point (hollow)", "ring"], ["var(--text)", "p = 0.5", "line"]]) + `<span class="legend-item" data-r="showing" style="color:var(--series-4)"></span>`,
+      tools: ui.btn("train", "train", true, "start / pause live training") + ui.btn("step", "+10 epochs") + ui.btn("reset", "reset weights"),
+      hint: "every 5th point is held out as test data · click adds the selected class · hover a neuron in the network to see what it computes",
+      data: { kind: "class", presets: ["xor", "circles", "moons", "spiral", "linear", "blobs2", "overlap"], def: "xor", n: 160, noise: 0.15 },
+      side: [
+        { title: "architecture", html: ui.range("L", "hidden layers", 1, 3, 1, 2) + ui.range("U", "units per layer", 1, 8, 1, 6) + ui.select("act", "activation", [["relu", "ReLU"], ["tanh", "tanh"], ["sigmoid", "sigmoid"], ["linear", "linear (no non-linearity!)"]], "tanh") },
+        { title: "training", html: ui.range("lr", "learning rate (log₁₀)", -3.5, -0.5, 0.25, -1.5, "0.032") + ui.range("l2", "L2 weight decay (log₁₀, −6 = off)", -6, -1, 0.5, -6, "off") + ui.select("bs", "batch", [["full", "full batch"], ["16", "mini-batch 16"]], "full") },
+      ],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "x", label: "x ∈ ℝ²", sub: "input", x: 36, y: 40, w: 60, kind: "data" },
+          { id: "hid", label: "Wx + b → act", sub: "hidden layers", x: 160, y: 40, kind: "op", tex: "a^{(l)}=g\\big(W^{(l)}a^{(l-1)}+b^{(l)}\\big)" },
+          { id: "out", label: "σ(z)", sub: "p(class 1)", x: 300, y: 40, w: 70, kind: "out" },
+          { id: "loss", label: "BCE", sub: "+ λ‖W‖²", x: 300, y: 120, kind: "loss" },
+          { id: "bp", label: "backprop", sub: "autodiff ∇", x: 172, y: 120, kind: "op", tex: "\\delta^{(l)}=(W^{(l+1)\\top}\\delta^{(l+1)})\\odot g'(z^{(l)})" },
+          { id: "adam", label: "Adam step", sub: "per-weight lr", x: 50, y: 120, kind: "param" },
+        ],
+        edges: [{ from: "x", to: "hid" }, { from: "hid", to: "out" }, { from: "out", to: "loss" }, { from: "loss", to: "bp" }, { from: "bp", to: "adam" }, { from: "adam", to: "hid", dash: true, label: "update W" }],
+      },
+      phases: { init: { label: "init", color: 3 }, train: { label: "training", color: 0 }, paused: { label: "paused", color: 4 } },
+      panels: [{ id: "net", title: "network", sub: "edge colour = sign, width = |weight| · hover a neuron", wide: true }],
+      charts: [{ id: "loss", title: "loss (train / test)", series: [{ key: "loss", label: "train", color: "var(--series-1)" }, { key: "tloss", label: "test", color: "var(--series-2)", dash: "4 3" }] }, { id: "acc", title: "accuracy (train / test)", series: [{ key: "acc", label: "train", color: "var(--series-3)" }, { key: "tacc", label: "test", color: "var(--series-5)", dash: "4 3" }], yd: [0, 1] }],
+      onFrame: render,
+      onData: () => { lab.points.forEach((p, i) => (p.test = i % 5 === 4)); reset(); },
+    });
+    lab.editable({ newPoint: (x, y, ev) => ({ x, y, label: lab.cls(ev), test: false }), onChange: () => { if (!training) pushFrame(); } });
+    const pl = lab.plane, L = pl.layers;
+    lab.player.setLive(true);
 
-    const svg = d3.select("#nn-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
+    let model = null, opt = null, epoch = 0, training = false, timer = null, frames = [], gridT = null, gridDims = null, subModels = {}, focus = null, net = null, stopped = false;
+    const P = () => ({ L: lab.val("L"), U: lab.val("U"), act: lab.val("act"), lr: Math.pow(10, lab.val("lr")), l2: lab.val("l2") <= -6 ? 0 : Math.pow(10, lab.val("l2")), bs: lab.val("bs") });
 
-    let points = MLU.makeTwoClass({ n: 90, mode: "xor" });
-    let model = null, training = false, epoch = 0, rafId = null, stopped = false;
-
-    function h1() { return +document.getElementById("nn-h1").value; }
-    function h2() { return +document.getElementById("nn-h2").value; }
-    function act() { return document.getElementById("nn-act").value; }
-    function lrVal() { return +document.getElementById("nn-lr").value / 250; }
-
-    function buildModel() {
+    function build() {
       if (model) model.dispose();
-      const m = tf.sequential();
-      m.add(tf.layers.dense({ units: h1(), activation: act(), inputShape: [2] }));
-      if (h2() > 0) m.add(tf.layers.dense({ units: h2(), activation: act() }));
-      m.add(tf.layers.dense({ units: 1, activation: "sigmoid" }));
-      m.compile({ optimizer: tf.train.adam(lrVal()), loss: "binaryCrossentropy", metrics: ["accuracy"] });
-      model = m;
+      if (opt) opt.dispose();
+      subModels = {};
+      const p = P();
+      model = tf.sequential();
+      for (let l = 0; l < p.L; l++) model.add(tf.layers.dense({ units: p.U, activation: p.act, inputShape: l ? undefined : [2], kernelInitializer: "glorotNormal" }));
+      model.add(tf.layers.dense({ units: 1, activation: "sigmoid" }));
+      opt = tf.train.adam(p.lr);
       epoch = 0;
+      const layers = [2, ...Array(p.L).fill(p.U), 1];
+      const el = lab.R("panel-net"); el.innerHTML = "";
+      net = Lab.net(el, { layers, w: 720, h: 190, r: 9, labels: ["input", ...Array(p.L).fill(0).map((_, i) => `hidden ${i + 1}`), "output"], onNeuron: (l, i, click) => { focus = click && focus && focus[0] === l && focus[1] === i ? null : [l, i]; net.select(...(focus || [-1, -1])); lab.player.redraw(); } });
     }
-    buildModel();
-
-    const bgG = svg.append("g");
-    const ptsG = svg.append("g");
-
-    async function drawBoundary() {
-      const cell = 16, xs = [], coords = [];
-      for (let px = PAD; px < W - PAD; px += cell)
-        for (let py = PAD; py < H - PAD; py += cell) {
-          xs.push([x.invert(px + cell / 2) / 10, y.invert(py + cell / 2) / 10]);
-          coords.push({ px, py });
+    function ensureGrid() {
+      const res = 60;
+      if (gridT && gridDims && gridDims.res === res) return;
+      if (gridT) gridT.dispose();
+      const g = Lab.sampleGrid(pl, (x, y) => [x / 10, y / 10], res);
+      gridDims = { res, cols: g.cols, rows: g.rows };
+      gridT = tf.tensor2d(g.values);
+    }
+    function data(set) {
+      const pts = lab.points.filter((p) => (set === "test" ? p.test : !p.test));
+      return pts;
+    }
+    function evalSet(pts) {
+      if (!pts.length) return { loss: null, acc: null };
+      return tf.tidy(() => {
+        const xs = tf.tensor2d(pts.map((p) => [p.x / 10, p.y / 10])), ys = tf.tensor2d(pts.map((p) => [p.label]));
+        const pr = model.predict(xs);
+        const loss = tf.losses.logLoss(ys, pr).dataSync()[0];
+        const acc = tf.mean(tf.equal(tf.greaterEqual(pr, 0.5), tf.cast(ys, "bool"))).dataSync()[0];
+        return { loss, acc };
+      });
+    }
+    function trainSteps(n) {
+      const tr = data("train");
+      if (tr.length < 2) return;
+      const p = P();
+      tf.tidy(() => {
+        const X = tf.tensor2d(tr.map((q) => [q.x / 10, q.y / 10])), Y = tf.tensor2d(tr.map((q) => [q.label]));
+        for (let s = 0; s < n; s++) {
+          let xs = X, ys = Y;
+          if (p.bs !== "full") { const idx = tf.tensor1d(Array.from({ length: 16 }, () => Math.floor(Math.random() * tr.length)), "int32"); xs = tf.gather(X, idx); ys = tf.gather(Y, idx); }
+          opt.minimize(() => {
+            let loss = tf.losses.logLoss(ys, model.apply(xs));
+            if (p.l2) for (const w of model.trainableWeights) if (/kernel/.test(w.name)) loss = loss.add(tf.sum(tf.square(w.read())).mul(p.l2));
+            return loss;
+          });
+          epoch++;
         }
-      const preds = tf.tidy(() => model.predict(tf.tensor2d(xs)).dataSync());
-      const cells = coords.map((c, i) => ({ ...c, p: preds[i] }));
-      const rects = bgG.selectAll("rect").data(cells);
-      rects.enter().append("rect").attr("width", cell).attr("height", cell)
-        .merge(rects).attr("x", (d) => d.px).attr("y", (d) => d.py)
-        .attr("fill", (d) => d3.interpolateRgb(MLU.palette[0], MLU.palette[1])(d.p)).attr("opacity", 0.18);
-      rects.exit().remove();
+      });
+    }
+    function snapshot() {
+      ensureGrid();
+      const grid = tf.tidy(() => model.predict(gridT).dataSync().slice());
+      const W = model.layers.map((ly) => ly.getWeights()[0].arraySync());
+      const tr = evalSet(data("train")), te = evalSet(data("test"));
+      return { grid, W, epoch, m: { loss: tr.loss, acc: tr.acc, tloss: te.loss, tacc: te.acc } };
+    }
+    function pushFrame() {
+      const s = snapshot();
+      const fr = {
+        phase: training ? "train" : epoch === 0 ? "init" : "paused", arch: training ? ["hid", "out", "loss", "bp", "adam"] : ["x", "hid", "out"],
+        title: epoch === 0 ? "Random initial weights" : `Epoch ${epoch}`,
+        text: epoch === 0 ? "Glorot-initialised weights give a nearly flat, uninformative output. Press <b>train</b>: every few steps a snapshot is recorded, so you can pause and scrub back through training." : `Train loss <b>${fmt(s.m.loss)}</b>, test loss <b>${fmt(s.m.tloss)}</b>. ${P().act === "linear" ? "With linear activations the whole network collapses to one linear map, so the boundary stays straight no matter how deep it is." : s.m.tloss != null && s.m.loss != null && s.m.tloss > s.m.loss * 1.6 && epoch > 300 ? "Test loss is pulling away from train loss: the network is starting to memorise. Try weight decay or fewer units." : "Each hidden unit learns a soft half-plane; later layers combine them into curved regions."}`,
+        tex: epoch === 0 ? "\\hat p=\\sigma\\big(W^{(L)}g(\\cdots g(W^{(1)}x+b^{(1)})\\cdots)+b^{(L)}\\big)" : "W\\leftarrow W-\\eta\\,\\frac{\\hat m_t}{\\sqrt{\\hat v_t}+\\epsilon},\\qquad L=-\\tfrac1n\\sum y\\log\\hat p+(1-y)\\log(1-\\hat p)",
+        st: s, m: s.m,
+      };
+      frames.push(fr);
+      if (frames.length > MAXF) frames = frames.filter((f, i) => i === 0 || i % 2 === 1 || i > frames.length - 40);
+      for (const c of ["loss", "acc"]) lab.charts[c].set(frames.map((f) => f.m));
+      const follow = lab.player.frames.length === 0 || lab.player.index >= lab.player.frames.length - 2;
+      if (frames.length === 1) lab.load(frames, { at: "end" });
+      else { lab.player.replaceAll(frames); if (follow) lab.player.show(frames.length - 1); }
+    }
+    function loop() {
+      if (!training || stopped) return;
+      trainSteps(P().bs === "full" ? 6 : 12);
+      pushFrame();
+      timer = setTimeout(loop, 40);
+    }
+    function setTraining(v) {
+      training = v;
+      const b = lab.q('[data-b="train"]');
+      b.textContent = v ? "pause" : "train";
+      if (v) loop(); else { clearTimeout(timer); pushFrame(); }
+    }
+    function reset() {
+      clearTimeout(timer);
+      build();
+      frames = [];
+      for (const c of ["loss", "acc"]) lab.charts[c].set([]);
+      pushFrame();
+      if (training) loop();
     }
 
-    function drawPoints() {
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y)).attr("fill", (d) => MLU.palette[d.label])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); drawPoints(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          drawPoints();
-        }));
-      sel.exit().remove();
+    function neuronValues(l, i, isLatest, st) {
+      if (l === 0) return Lab.sampleGrid(pl, (x, y) => (i === 0 ? x : y) / 10, 60).values;
+      const p = P();
+      if (l === p.L + 1) return st.grid;
+      if (!isLatest) return null;
+      ensureGrid();
+      if (!subModels[l]) subModels[l] = tf.model({ inputs: model.inputs, outputs: model.layers[l - 1].output });
+      return tf.tidy(() => { const out = subModels[l].predict(gridT); return out.slice([0, i], [-1, 1]).dataSync().slice(); });
     }
 
-    async function trainLoop() {
-      if (stopped) return;
-      if (training && points.length > 3) {
-        const xsArr = points.map((p) => [p.x / 10, p.y / 10]);
-        const ysArr = points.map((p) => [p.label]);
-        const xt = tf.tensor2d(xsArr), yt = tf.tensor2d(ysArr);
-        const h = await model.fit(xt, yt, { epochs: 3, batchSize: points.length, verbose: 0 });
-        xt.dispose(); yt.dispose();
-        epoch += 3;
-        document.getElementById("nn-epoch").textContent = epoch;
-        document.getElementById("nn-readout").innerHTML =
-          `points: <b>${points.length}</b><br>loss: <b class="num">${h.history.loss.at(-1).toFixed(4)}</b><br>accuracy: <b class="num">${(h.history.acc ? h.history.acc.at(-1) : h.history.accuracy.at(-1)).toFixed(3)}</b>`;
-        await drawBoundary();
+    const showEl = lab.R("legend").querySelector('[data-r="showing"]');
+    function render(f, idx, all) {
+      const st = f.st;
+      if (!st || !st.grid) return;
+      const isLatest = idx === all.length - 1;
+      let vals = st.grid, label = "", isOut = true;
+      if (focus) {
+        const v = neuronValues(focus[0], focus[1], isLatest, st);
+        if (v) { vals = v; isOut = focus[0] === P().L + 1; label = focus[0] === 0 ? `showing input ${focus[1] === 0 ? "x₁" : "x₂"}` : isOut ? "showing output neuron" : `showing hidden ${focus[0]} · unit ${focus[1] + 1}`; }
+        else label = "neuron view needs the latest frame";
       }
-      rafId = requestAnimationFrame(trainLoop);
+      showEl.textContent = label;
+      const grid = { cols: gridDims.cols, rows: gridDims.rows, values: Array.from(vals) };
+      if (isOut) {
+        Lab.paintGrid(L.bg, pl, grid, (p) => Lab.probColor(p, 0.55));
+        Lab.contour(L.under, pl, grid, [0.5], { cls: "iso-main", width: 2 });
+      } else {
+        const mx = Math.max(1e-6, ...grid.values.map(Math.abs));
+        Lab.paintGrid(L.bg, pl, grid, (v) => Lab.divergeColor(v, mx, 0.6));
+        L.under.selectAll("path").remove();
+      }
+      lab.drawPoints({ color: (d) => (d.test ? "transparent" : col(d.label)), stroke: (d) => (d.test ? col(d.label) : "var(--bg)"), sw: (d) => (d.test ? 2 : 1.1), r: 4.4 });
+      if (net) {
+        net.weights(st.W);
+      }
+      const m = f.m || {};
+      const nParams = st.W.reduce((s, w) => s + w.length * w[0].length + w[0].length, 0);
+      lab.readout(`<div class="kv"><span>epoch</span><b>${st.epoch}</b><span>parameters</span><b>${nParams}</b><span>train loss / acc</span><b>${fmt(m.loss)} / ${m.acc != null ? (m.acc * 100).toFixed(0) + "%" : "–"}</b><span>test loss / acc</span><b>${fmt(m.tloss)} / ${m.tacc != null ? (m.tacc * 100).toFixed(0) + "%" : "–"}</b></div><div class="note">Real backprop via TensorFlow.js autodiff, Adam optimiser.</div>`);
     }
 
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), label: event.shiftKey ? 1 : 0 });
-      drawPoints();
-    });
-    document.getElementById("nn-train").addEventListener("click", (e) => {
-      training = !training;
-      e.target.textContent = training ? "pause" : "train";
-      e.target.classList.toggle("primary", training);
-    });
-    document.getElementById("nn-reset").addEventListener("click", () => { buildModel(); drawBoundary(); document.getElementById("nn-epoch").textContent = 0; });
-    ["nn-h1", "nn-h2", "nn-act", "nn-lr"].forEach((id) => document.getElementById(id).addEventListener("change", () => {
-      document.getElementById("nn-h1-val").textContent = h1();
-      document.getElementById("nn-h2-val").textContent = h2();
-      document.getElementById("nn-lr-val").textContent = lrVal().toFixed(3);
-      buildModel(); drawBoundary();
-    }));
-    document.getElementById("nn-preset-xor").addEventListener("click", () => { points = MLU.makeTwoClass({ n: 90, mode: "xor" }); buildModel(); drawPoints(); drawBoundary(); });
-    document.getElementById("nn-preset-circles").addEventListener("click", () => { points = MLU.makeTwoClass({ n: 90, mode: "circles" }); buildModel(); drawPoints(); drawBoundary(); });
-
-    document.getElementById("nn-h1-val").textContent = h1();
-    document.getElementById("nn-h2-val").textContent = h2();
-    document.getElementById("nn-lr-val").textContent = lrVal().toFixed(3);
-    drawPoints();
-    drawBoundary();
-    trainLoop();
-
-    return () => { stopped = true; training = false; if (rafId) cancelAnimationFrame(rafId); if (model) model.dispose(); };
+    lab.q('[data-b="train"]').onclick = () => setTraining(!training);
+    lab.q('[data-b="step"]').onclick = () => { trainSteps(10); pushFrame(); };
+    lab.q('[data-b="reset"]').onclick = () => reset();
+    lab.watch(["L", "U", "act", "lr", "l2", "bs"], () => reset(), { format: { lr: (v) => fmt(Math.pow(10, v), 4), l2: (v) => (v <= -6 ? "off" : "1e" + v) } });
+    lab.cleanup.push(() => { stopped = true; clearTimeout(timer); if (model) model.dispose(); if (opt) opt.dispose(); if (gridT) gridT.dispose(); });
+    lab.loadPreset("xor");
+    setTraining(true);
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "neural-net",
     name: "Neural Network (MLP)",
     category: "Deep Learning",
-    tagline: "TensorFlow.js, trained live",
-    description: "A configurable feed-forward network trained live in your browser with TensorFlow.js. Try XOR or circular data with a linear-only setup (0 units in layer 2, relu off) to see why depth matters.",
+    tagline: "TensorFlow.js, live training, neuron views",
+    description: "A configurable multilayer perceptron trained live in your browser with TensorFlow.js. Watch the decision field form, weights thicken in the network diagram, train and test loss diverge when it overfits, and hover any neuron to see the feature it has learned.",
     info: {
       type: "Supervised - Classification/Regression. Parametric, non-linear (feed-forward multilayer perceptron).",
       scenario: "The true decision boundary is complex/non-linear and enough data exists to fit many parameters - the general-purpose workhorse of modern ML.",

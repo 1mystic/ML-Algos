@@ -1,169 +1,155 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-
-  function kernel(a, b, type, p) {
-    const dot = a.x * b.x + a.y * b.y;
-    if (type === "linear") return dot;
-    if (type === "poly") return (dot + 1) ** p.degree;
-    if (type === "rbf") { const d2 = (a.x - b.x) ** 2 + (a.y - b.y) ** 2; return Math.exp(-p.gamma * d2); }
-    return dot;
+  const { ui, col, fmt } = Lab;
+  const S = 9;
+  function kernelFn(type, gamma, degree) {
+    if (type === "linear") return (a, b) => (a.x * b.x + a.y * b.y) / (S * S);
+    if (type === "poly") return (a, b) => ((a.x * b.x + a.y * b.y) / (S * S) + 1) ** degree;
+    return (a, b) => Math.exp(-gamma * ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) / (S * S) * 4);
   }
+  const KTEX = {
+    linear: "K(x,x')=x^\\top x'",
+    poly: "K(x,x')=(x^\\top x'+1)^{d}",
+    rbf: "K(x,x')=\\exp\\!\\big(-\\gamma\\lVert x-x'\\rVert^2\\big)",
+  };
 
-  // Kernelized Pegasos (Shalev-Shwartz et al.): a light, real online SVM
-  // solver - well suited to a small in-browser demo with linear/poly/rbf kernels.
-  function trainSVM(points, type, params, C) {
-    const n = points.length;
-    const alpha = new Array(n).fill(0);
-    if (n < 2) return { alpha, decide: () => 0 };
-    const lambda = 1 / (C * n);
-    const T = Math.max(400, n * 60);
-    // precompute kernel matrix once (n is small)
-    const K = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => kernel(points[i], points[j], type, params)));
-    for (let t = 1; t <= T; t++) {
-      const i = MLU.randInt(n);
-      let s = 0;
-      for (let j = 0; j < n; j++) if (alpha[j]) s += alpha[j] * points[j].label * K[i][j];
-      const margin = points[i].label * (s / (lambda * t));
-      if (margin < 1) alpha[i] += 1;
+  // Simplified SMO (Platt 1998, as taught in CS229): repeatedly pick a pair of
+  // multipliers that violate the KKT conditions and optimise them jointly in
+  // closed form, clipping to the box [0, C].
+  function smoFrames(pts, K, C, maxFrames = 140) {
+    const n = pts.length, y = pts.map((p) => (p.label === 1 ? 1 : -1));
+    const Km = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => K(pts[i], pts[j])));
+    const a = new Float64Array(n);
+    let b = 0;
+    const f = (i) => { let s = b; for (let j = 0; j < n; j++) if (a[j]) s += a[j] * y[j] * Km[j][i]; return s; };
+    const dual = () => { let s = 0; for (let i = 0; i < n; i++) s += a[i]; let q = 0; for (let i = 0; i < n; i++) if (a[i]) for (let j = 0; j < n; j++) if (a[j]) q += a[i] * a[j] * y[i] * y[j] * Km[i][j]; return s - q / 2; };
+    const snap = (extra) => ({ a: Array.from(a), b, ...extra });
+    const frames = [{ phase: "init", major: true, arch: ["k", "dual"], title: "All multipliers αᵢ start at 0", text: "The dual problem has one multiplier per training point. A point only influences the boundary if its α > 0; those points are the <b>support vectors</b>. Right now there are none.", tex: "\\max_{\\alpha}\\;\\sum_i\\alpha_i-\\tfrac12\\sum_{i,j}\\alpha_i\\alpha_j y_iy_jK(x_i,x_j)\\quad\\text{s.t. }0\\le\\alpha_i\\le C,\\;\\sum_i\\alpha_iy_i=0", st: snap({}), m: { dual: 0, sv: 0 } }];
+    const tol = 1e-3;
+    let passes = 0, iter = 0, updates = 0;
+    const every = Math.max(1, Math.round(n / 12));
+    while (passes < 6 && iter < 80) {
+      let changed = 0;
+      for (let i = 0; i < n; i++) {
+        const Ei = f(i) - y[i];
+        if ((y[i] * Ei < -tol && a[i] < C) || (y[i] * Ei > tol && a[i] > 0)) {
+          let j = MLU.randInt(n - 1); if (j >= i) j++;
+          const Ej = f(j) - y[j];
+          const ai = a[i], aj = a[j];
+          let Lo, Hi;
+          if (y[i] !== y[j]) { Lo = Math.max(0, aj - ai); Hi = Math.min(C, C + aj - ai); } else { Lo = Math.max(0, ai + aj - C); Hi = Math.min(C, ai + aj); }
+          if (Hi - Lo < 1e-9) continue;
+          const eta = 2 * Km[i][j] - Km[i][i] - Km[j][j];
+          if (eta >= 0) continue;
+          let nj = aj - (y[j] * (Ei - Ej)) / eta;
+          nj = Math.min(Hi, Math.max(Lo, nj));
+          if (Math.abs(nj - aj) < 1e-5) continue;
+          const ni = ai + y[i] * y[j] * (aj - nj);
+          a[i] = ni; a[j] = nj;
+          const b1 = b - Ei - y[i] * (ni - ai) * Km[i][i] - y[j] * (nj - aj) * Km[i][j];
+          const b2 = b - Ej - y[i] * (ni - ai) * Km[i][j] - y[j] * (nj - aj) * Km[j][j];
+          b = ni > 0 && ni < C ? b1 : nj > 0 && nj < C ? b2 : (b1 + b2) / 2;
+          changed++; updates++;
+          if (updates % every === 0 && frames.length < maxFrames) {
+            const sv = Array.from(a).filter((v) => v > 1e-6).length;
+            frames.push({ phase: "smo", arch: ["pair", "clip", "bias", "dual"], title: `SMO update ${updates}: optimise α${i} and α${j} together`, text: `Pick a pair violating the KKT conditions, solve their 2-variable QP exactly, clip to the box [0, C], then fix b. Support vectors so far: <b>${sv}</b>. The dual objective only ever rises.`, tex: "\\alpha_j^{new}=\\mathrm{clip}_{[L,H]}\\Big(\\alpha_j-\\frac{y_j(E_i-E_j)}{\\eta}\\Big),\\quad \\eta=2K_{ij}-K_{ii}-K_{jj}", st: snap({ pair: [i, j] }), m: { dual: dual(), sv } });
+          }
+        }
+      }
+      iter++;
+      passes = changed === 0 ? passes + 1 : 0;
     }
-    const scale = 1 / (lambda * T);
-    function decide(pt) {
-      let s = 0;
-      for (let j = 0; j < n; j++) if (alpha[j]) s += alpha[j] * points[j].label * kernel(points[j], pt, type, params);
-      return s * scale;
-    }
-    return { alpha, decide };
+    const sv = Array.from(a).filter((v) => v > 1e-6).length;
+    const bounded = Array.from(a).filter((v) => v > C - 1e-6).length;
+    frames.push({ phase: "done", major: true, arch: ["k", "sum", "out"], title: `Converged: ${sv} support vectors`, text: `Only the ringed points define the model; delete any other point and the boundary will not move. ${bounded} of them sit at α = C (inside the margin or misclassified). The dashed lines are f(x) = ±1, the margin.`, tex: "f(x)=\\sum_{i\\in SV}\\alpha_iy_iK(x_i,x)+b,\\qquad \\hat y=\\operatorname{sign}f(x)", st: snap({}), m: { dual: dual(), sv } });
+    return { frames, y };
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[0]}"></span>class -1</span>
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[1]}"></span>class +1</span>
-              <span class="legend-item">ring = support vector</span>
-            </div>
-            <div class="btn-row">
-              <button id="svm-preset-linear">linear data</button>
-              <button id="svm-preset-circles">circular data</button>
-              <button id="svm-clear">clear</button>
-            </div>
-          </div>
-          <svg id="svm-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click to add class −1 · shift-click for class +1 · retrains automatically</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>kernel</h3>
-            <div class="field"><label>type</label>
-              <select id="svm-kernel"><option value="linear">linear</option><option value="rbf" selected>RBF</option><option value="poly">poly</option></select>
-            </div>
-            <div class="field" id="svm-gamma-field"><label>&gamma; (RBF) <span class="val" id="svm-gamma-val">0.5</span></label>
-              <input type="range" id="svm-gamma" min="1" max="200" step="1" value="50" /></div>
-            <div class="field" id="svm-degree-field" style="display:none"><label>degree (poly) <span class="val" id="svm-degree-val">3</span></label>
-              <input type="range" id="svm-degree" min="2" max="5" step="1" value="3" /></div>
-            <div class="field"><label>C (soft-margin) <span class="val" id="svm-c-val">1.0</span></label>
-              <input type="range" id="svm-c" min="1" max="100" step="1" value="10" /></div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="svm-readout">–</div>
-            <div class="note">Kernelized Pegasos solver on the dual soft-margin SVM objective, with Linear / Poly / RBF kernels, trained online rather than via full QP for speed in-browser.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#svm-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    function presetLinear() { return MLU.makeTwoClass({ n: 50, mode: "linear" }).map((p) => ({ ...p, label: p.label === 0 ? -1 : 1 })); }
-    function presetCircles() { return MLU.makeTwoClass({ n: 70, mode: "circles" }).map((p) => ({ ...p, label: p.label === 0 ? -1 : 1 })); }
-    let points = presetCircles();
-
-    const bgG = svg.append("g");
-    const ptsG = svg.append("g");
-
-    function kType() { return document.getElementById("svm-kernel").value; }
-    function params() { return { gamma: +document.getElementById("svm-gamma").value / 100, degree: +document.getElementById("svm-degree").value }; }
-    function Cval() { return +document.getElementById("svm-c").value / 10; }
-
-    function render() {
-      document.getElementById("svm-gamma-val").textContent = params().gamma.toFixed(2);
-      document.getElementById("svm-degree-val").textContent = params().degree;
-      document.getElementById("svm-c-val").textContent = Cval().toFixed(1);
-      document.getElementById("svm-gamma-field").style.display = kType() === "rbf" ? "" : "none";
-      document.getElementById("svm-degree-field").style.display = kType() === "poly" ? "" : "none";
-
-      const hasBoth = points.some((p) => p.label === -1) && points.some((p) => p.label === 1);
-      let model = null;
-      if (hasBoth) model = trainSVM(points, kType(), params(), Cval());
-
-      const cell = 14, cells = [];
-      if (model) {
-        for (let px = PAD; px < W - PAD; px += cell)
-          for (let py = PAD; py < H - PAD; py += cell) {
-            const xv = x.invert(px + cell / 2), yv = y.invert(py + cell / 2);
-            cells.push({ px, py, f: model.decide({ x: xv, y: yv }) });
-          }
-      }
-      const rects = bgG.selectAll("rect").data(cells);
-      rects.enter().append("rect").attr("width", cell).attr("height", cell)
-        .merge(rects).attr("x", (d) => d.px).attr("y", (d) => d.py)
-        .attr("fill", (d) => (d.f >= 0 ? MLU.palette[1] : MLU.palette[0]))
-        .attr("opacity", (d) => Math.min(0.32, 0.08 + Math.abs(Math.tanh(d.f)) * 0.22));
-      rects.exit().remove();
-
-      const sel = ptsG.selectAll("g.pt").data(points);
-      const enter = sel.enter().append("g").attr("class", "pt");
-      enter.append("circle").attr("class", "sv-ring").attr("r", 9).attr("fill", "none").attr("stroke", "var(--text)").attr("stroke-width", 1.2);
-      enter.append("circle").attr("class", "dot").attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1);
-      const merged = enter.merge(sel);
-      merged.attr("transform", (d) => `translate(${x(d.x)},${y(d.y)})`).style("cursor", "grab");
-      merged.select(".dot").attr("fill", (d) => (d.label === 1 ? MLU.palette[1] : MLU.palette[0]));
-      merged.select(".sv-ring").style("opacity", (d, i) => (model && model.alpha[i] > 0 ? 1 : 0));
-      merged
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-
-      let correct = 0;
-      if (model) for (const p of points) if (Math.sign(model.decide(p) || 1) === p.label) correct++;
-      document.getElementById("svm-readout").innerHTML = hasBoth
-        ? `points: <b>${points.length}</b><br>support vectors: <b>${model.alpha.filter((a) => a > 0).length}</b><br>train accuracy: <b class="num">${((correct / points.length) * 100).toFixed(1)}%</b>`
-        : "need points from both classes";
-    }
-
-    svg.on("click", (event) => {
-      if (event.target.closest(".pt")) return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), label: event.shiftKey ? 1 : -1 });
-      render();
+    const lab = Lab.studio(root, {
+      id: "svm", fps: 5, classes: 2, classNames: ["−1", "+1"],
+      legend: ui.legend([["var(--text)", "support vector", "ring"], ["var(--text)", "f(x)=0", "line"], ["var(--text)", "margin f=±1", "dash"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      hint: "click adds the selected class · drag points across the margin and watch which ones matter",
+      data: { kind: "class", presets: ["linear", "circles", "moons", "xor", "overlap", "spiral"], def: "linear", n: 60, noise: 0.3, nRange: [10, 140] },
+      side: [{ title: "kernel", html: ui.select("kern", "kernel", [["linear", "linear"], ["poly", "polynomial"], ["rbf", "RBF (Gaussian)"]], "linear") + ui.range("C", "C (log₁₀)", -2, 3, 0.25, 0.5, "3.16") + ui.range("gamma", "γ for RBF (log₁₀)", -1.5, 2, 0.25, 0.5, "3.16") + ui.range("deg", "degree for poly", 2, 6, 1, 3) }],
+      arch: {
+        w: 380, h: 200,
+        nodes: [
+          { id: "x", label: "x", sub: "query", x: 30, y: 44, w: 44, kind: "data" },
+          { id: "k", label: "K(xᵢ, x)", sub: "kernel trick", x: 124, y: 44, kind: "op", info: "Similarity to each support vector. The kernel computes an inner product in a (possibly infinite) feature space without ever building it." },
+          { id: "sum", label: "Σ αᵢyᵢK + b", sub: "weighted vote", x: 238, y: 44, kind: "op" },
+          { id: "out", label: "sign", sub: "±1", x: 340, y: 44, w: 56, kind: "out" },
+          { id: "dual", label: "dual QP", sub: "max W(α)", x: 46, y: 150, kind: "loss", tex: "W(\\alpha)=\\sum\\alpha_i-\\tfrac12\\sum\\alpha_i\\alpha_jy_iy_jK_{ij}" },
+          { id: "pair", label: "pick (i, j)", sub: "KKT violators", x: 140, y: 150, kind: "op" },
+          { id: "clip", label: "clip to [0,C]", sub: "box constraint", x: 240, y: 150, kind: "param" },
+          { id: "bias", label: "update b", x: 336, y: 150, w: 64, kind: "param" },
+        ],
+        edges: [{ from: "x", to: "k" }, { from: "k", to: "sum" }, { from: "sum", to: "out" }, { from: "dual", to: "pair" }, { from: "pair", to: "clip" }, { from: "clip", to: "bias" }, { from: "bias", to: "sum", dash: true, label: "α, b" }],
+      },
+      phases: { init: { label: "init", color: 3 }, smo: { label: "SMO step", color: 0 }, done: { label: "converged", color: 2 } },
+      panels: [{ id: "alpha", title: "multipliers α of the support vectors" }],
+      charts: [{ id: "dual", title: "dual objective & support vectors", series: [{ key: "dual", label: "W(α)", color: "var(--series-1)" }, { key: "sv", label: "# SV", color: "var(--series-4)", dash: "4 3", digits: 0 }] }],
+      onFrame: render, onData: () => retrain(),
     });
-    ["svm-kernel", "svm-gamma", "svm-degree", "svm-c"].forEach((id) => document.getElementById(id).addEventListener("input", render));
-    document.getElementById("svm-preset-linear").addEventListener("click", () => { points = presetLinear(); render(); });
-    document.getElementById("svm-preset-circles").addEventListener("click", () => { points = presetCircles(); render(); });
-    document.getElementById("svm-clear").addEventListener("click", () => { points = []; render(); });
-
-    render();
-    return () => {};
+    lab.editable({ onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const P = () => ({ kern: lab.val("kern"), C: Math.pow(10, lab.val("C")), gamma: Math.pow(10, lab.val("gamma")), deg: lab.val("deg") });
+    let K = null, ys = [];
+    function retrain({ at = "start" } = {}) {
+      const p = P();
+      K = kernelFn(p.kern, p.gamma, p.deg);
+      lab.ctl("gamma").closest(".field").style.display = p.kern === "rbf" ? "" : "none";
+      lab.ctl("deg").closest(".field").style.display = p.kern === "poly" ? "" : "none";
+      if (!lab.points.some((q) => q.label === 0) || !lab.points.some((q) => q.label === 1)) {
+        lab.load([{ phase: "idle", title: "Need both classes", text: "Add points of each class.", st: { a: [], b: 0 } }]);
+        return;
+      }
+      MLU.seedRng(5);
+      const r = smoFrames(lab.points, K, p.C);
+      ys = r.y;
+      lab.load(r.frames, { at, play: at === "start" });
+    }
+    const alphaBars = Lab.bars(lab.R("panel-alpha"), { w: 360, h: 130 });
+    const ringG = L.top.append("g"), pairG = L.top.append("g");
+    function render(f) {
+      const st = f.st, pts = lab.points;
+      if (!st.a.length) { L.bg.selectAll("*").remove(); lab.drawPoints({}); return; }
+      const sv = st.a.map((v, i) => i).filter((i) => st.a[i] > 1e-6);
+      const dec = (x, y) => { let s = st.b; for (const i of sv) s += st.a[i] * ys[i] * K(pts[i], { x, y }); return s; };
+      const grid = Lab.sampleGrid(pl, dec, 80);
+      Lab.paintGrid(L.bg, pl, grid, (v) => Lab.divergeColor(v, 2.2, 0.5));
+      Lab.contour(L.under, pl, grid, [0], { cls: "iso-main", width: 2.2 });
+      Lab.contour(L.under, pl, grid, [-1, 1], { cls: "iso-dash", width: 1.2, dash: "5 4", stroke: "var(--text-dim)" });
+      lab.drawPoints({ color: (d) => col(d.label) });
+      const C = P().C;
+      const rings = ringG.selectAll("circle").data(sv);
+      rings.exit().remove();
+      rings.enter().append("circle").attr("fill", "none").attr("pointer-events", "none").merge(rings)
+        .attr("cx", (i) => pl.x(pts[i].x)).attr("cy", (i) => pl.y(pts[i].y)).attr("r", 9)
+        .attr("stroke", "var(--text)").attr("stroke-width", (i) => (st.a[i] > C - 1e-6 ? 1.2 : 2)).attr("stroke-dasharray", (i) => (st.a[i] > C - 1e-6 ? "2 2" : null));
+      pairG.selectAll("*").remove();
+      if (st.pair) {
+        const [i, j] = st.pair;
+        pairG.append("line").attr("x1", pl.x(pts[i].x)).attr("y1", pl.y(pts[i].y)).attr("x2", pl.x(pts[j].x)).attr("y2", pl.y(pts[j].y)).attr("stroke", "var(--series-4)").attr("stroke-width", 2).attr("stroke-dasharray", "4 3");
+        for (const k of [i, j]) pairG.append("circle").attr("cx", pl.x(pts[k].x)).attr("cy", pl.y(pts[k].y)).attr("r", 13).attr("fill", "none").attr("stroke", "var(--series-4)").attr("stroke-width", 2.4);
+      }
+      const svs = sv.slice().sort((p, q) => st.a[q] - st.a[p]).slice(0, 24);
+      alphaBars.set(svs.map((i) => ({ label: "#" + i, value: st.a[i], color: col(pts[i].label) })), { values: false });
+      let ok = 0; for (let i = 0; i < pts.length; i++) if ((dec(pts[i].x, pts[i].y) >= 0 ? 1 : 0) === pts[i].label) ok++;
+      lab.readout(`<div class="kv"><span>support vectors</span><b>${sv.length} / ${pts.length}</b><span>at bound α = C</span><b>${sv.filter((i) => st.a[i] > C - 1e-6).length}</b><span>bias b</span><b>${fmt(st.b)}</b><span>train accuracy</span><b>${((ok / pts.length) * 100).toFixed(1)}%</b></div><div class="note">${Lab.texHTML(KTEX[P().kern], false)} · dotted rings mark α = C</div>`);
+    }
+    lab.watch(["kern", "C", "gamma", "deg"], () => retrain(), { format: { C: (v) => fmt(Math.pow(10, v), 2), gamma: (v) => fmt(Math.pow(10, v), 2) } });
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("linear");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "svm",
     name: "Support Vector Machine",
     category: "Supervised - Classification",
-    tagline: "linear / poly / RBF kernels",
-    description: "A kernelized soft-margin SVM trained with the kernel-Pegasos online solver. Switch kernels to see why RBF handles the circular dataset that a linear kernel can't.",
+    tagline: "SMO solver, margins & support vectors",
+    description: "Maximum-margin classification with linear, polynomial and RBF kernels. Watch the SMO solver optimise pairs of multipliers, support vectors light up, and the margin settle; drag points to see that only support vectors matter.",
     info: {
       type: "Supervised - Classification (an SVR regression variant also exists). Max-margin kernel method.",
       scenario: "Classification with a clear or kernel-separable margin, on small-to-medium datasets, when a robust, theoretically-grounded margin-based classifier is wanted; kernels let it handle non-linear boundaries.",

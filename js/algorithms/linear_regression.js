@@ -1,139 +1,182 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
+  const { ui, col, fmt } = Lab;
+  // Inputs are scaled to [-1, 1] before building the polynomial basis so that
+  // gradient descent is well conditioned at every degree.
+  const S = 9;
+  const phi = (x, deg) => { const u = x / S; const r = [1]; for (let d = 1; d <= deg; d++) r.push(u ** d); return r; };
+  const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 
-  function fitRidge(points, degree, lambda) {
-    // design matrix with polynomial basis [1, x, x^2, ... x^degree]
-    const X = points.map((p) => Array.from({ length: degree + 1 }, (_, k) => p.x ** k));
-    const y = points.map((p) => p.y);
-    const Xt = MLU.transpose(X);
-    const XtX = MLU.matMul(Xt, X);
-    for (let i = 0; i < XtX.length; i++) XtX[i][i] += lambda;
-    const Xty = Xt.map((row) => row.reduce((s, v, j) => s + v * y[j], 0));
-    return MLU.solveLinearSystem(XtX, Xty);
+  function mse(pts, w, deg) { let s = 0; for (const p of pts) s += (dot(w, phi(p.x, deg)) - p.y) ** 2; return pts.length ? s / pts.length : 0; }
+  function closedForm(pts, deg, lam) {
+    const P = deg + 1;
+    const A = MLU.zeros(P, P), b = new Array(P).fill(0);
+    for (const p of pts) { const f = phi(p.x, deg); for (let i = 0; i < P; i++) { b[i] += f[i] * p.y; for (let j = 0; j < P; j++) A[i][j] += f[i] * f[j]; } }
+    for (let i = 1; i < P; i++) A[i][i] += lam * pts.length; // bias is not penalised
+    return { w: MLU.solveLinearSystem(A, b), A, b };
   }
-  function predict(coeffs, x) { return coeffs.reduce((s, c, k) => s + c * x ** k, 0); }
+  function r2(pts, w, deg) {
+    const m = MLU.mean(pts.map((p) => p.y));
+    const ss = pts.reduce((s, p) => s + (p.y - m) ** 2, 0) || 1;
+    return 1 - (mse(pts, w, deg) * pts.length) / ss;
+  }
+
+  function buildFrames(pts, { deg, lam, solver, lr, epochs }) {
+    const P = deg + 1;
+    if (pts.length < 2) return [{ phase: "idle", title: "Add at least two points", text: "Click the canvas or load an example dataset.", st: { w: new Array(P).fill(0) } }];
+    const frames = [];
+    const reg = (w) => lam * w.slice(1).reduce((s, v) => s + v * v, 0);
+    if (solver === "normal") {
+      const { w } = closedForm(pts, deg, lam);
+      frames.push({ phase: "basis", arch: ["x", "basis"], title: "Build the design matrix Φ", text: `Each x becomes a row of ${P} basis features [1, x, x², …]. With ${pts.length} points, Φ is ${pts.length} × ${P}.`, tex: "\\Phi=\\begin{bmatrix}1 & x_1 & \\cdots & x_1^{d}\\\\ \\vdots & & & \\vdots\\\\ 1 & x_n & \\cdots & x_n^{d}\\end{bmatrix}", st: { w: new Array(P).fill(0), hide: true }, m: {} });
+      frames.push({ phase: "solve", arch: ["basis", "model", "loss"], title: "Set the gradient to zero", text: "Squared error is a convex bowl in w, so its minimum is where the gradient vanishes. That gives the normal equations; ridge adds λI to the diagonal, which also makes the matrix invertible.", tex: "\\nabla_w\\Big(\\tfrac1n\\lVert \\Phi w-y\\rVert^2+\\lambda\\lVert w\\rVert^2\\Big)=0\\;\\Rightarrow\\;(\\Phi^\\top\\Phi+n\\lambda I)\\,w=\\Phi^\\top y", st: { w: new Array(P).fill(0), hide: true }, m: {} });
+      frames.push({ phase: "done", major: true, arch: ["model", "yhat", "loss"], title: "Solved in one shot", text: `MSE <b>${mse(pts, w, deg).toFixed(3)}</b>, R² <b>${r2(pts, w, deg).toFixed(3)}</b>. No iterations, no learning rate, but cost grows as O(p³) in the number of features.`, tex: "\\hat w=(\\Phi^\\top\\Phi+n\\lambda I)^{-1}\\Phi^\\top y", st: { w }, m: { mse: mse(pts, w, deg) } });
+      return frames;
+    }
+    let w = new Array(P).fill(0);
+    const keep = new Set(Lab.checkpoints(epochs, 80));
+    for (let e = 0; e <= epochs; e++) {
+      const L = mse(pts, w, deg) + reg(w);
+      if (!isFinite(L) || L > 1e8) {
+        frames.push({ phase: "diverged", major: true, arch: ["update"], title: `Diverged at epoch ${e}`, text: "The learning rate is too large: every step overshoots the minimum by more than the last, so the loss explodes. Lower η.", st: { w: frames.length ? frames[frames.length - 1].st.w : w }, m: {} });
+        break;
+      }
+      const g = new Array(P).fill(0);
+      for (const p of pts) { const f = phi(p.x, deg); const err = dot(w, f) - p.y; for (let i = 0; i < P; i++) g[i] += (2 * err * f[i]) / pts.length; }
+      for (let i = 1; i < P; i++) g[i] += 2 * lam * w[i];
+      if (keep.has(e)) {
+        const gn = Math.sqrt(g.reduce((s, v) => s + v * v, 0));
+        frames.push({
+          phase: e === 0 ? "init" : "gd", major: e === 0, arch: e === 0 ? ["x", "basis", "model"] : ["model", "yhat", "loss", "grad", "update"],
+          title: e === 0 ? "Start from w = 0 (a flat line)" : `Epoch ${e} · gradient step`,
+          text: e === 0 ? "Gradient descent starts anywhere and walks downhill on the loss surface. The residual sticks show each point's error." : `Loss <b>${L.toFixed(3)}</b>, gradient norm <b>${gn.toFixed(3)}</b>. Each step moves w against the gradient, scaled by η = ${lr}.`,
+          tex: e === 0 ? "\\hat y=w^\\top\\phi(x),\\qquad L(w)=\\tfrac1n\\sum_i(\\hat y_i-y_i)^2+\\lambda\\lVert w_{1:}\\rVert^2" : "w\\leftarrow w-\\eta\\,\\nabla L=w-\\eta\\Big(\\tfrac{2}{n}\\Phi^\\top(\\Phi w-y)+2\\lambda w\\Big)",
+          st: { w: w.slice(), g: g.slice() }, m: { mse: mse(pts, w, deg), gnorm: gn },
+        });
+      }
+      for (let i = 0; i < P; i++) w[i] -= lr * g[i];
+    }
+    const last = frames[frames.length - 1];
+    if (last.phase !== "diverged") {
+      const opt = closedForm(pts, deg, lam).w;
+      const gap = mse(pts, last.st.w, deg) - mse(pts, opt, deg);
+      frames.push({ ...last, phase: "done", major: true, arch: ["yhat", "loss"], title: "Training finished", text: `Final MSE <b>${mse(pts, last.st.w, deg).toFixed(3)}</b>, R² <b>${r2(pts, last.st.w, deg).toFixed(3)}</b>. The exact closed-form optimum is ${gap < 1e-3 ? "reached" : `still <b>${gap.toFixed(3)}</b> lower: run more epochs or raise η`}.` });
+    }
+    return frames;
+  }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="legend-item"><span class="swatch" style="background:${MLU.palette[0]}"></span>data point</span></div>
-            <div class="btn-row">
-              <button id="lr-regen">regenerate data</button>
-              <button id="lr-clear">clear</button>
-            </div>
-          </div>
-          <svg id="lr-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click the plot to add a point · drag a point to move it · double-click a point to remove it</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>model</h3>
-            <div class="field">
-              <label>polynomial degree <span class="val" id="lr-deg-val">1</span></label>
-              <input type="range" id="lr-degree" min="1" max="6" step="1" value="1" />
-            </div>
-            <div class="field">
-              <label>ridge &lambda; (L2) <span class="val" id="lr-lambda-val">0.00</span></label>
-              <input type="range" id="lr-lambda" min="0" max="300" step="1" value="0" />
-            </div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="lr-readout">–</div>
-            <div class="note">Closed-form ridge regression: &beta; = (XᵀX + &lambda;I)⁻¹Xᵀy, recomputed on every edit, generalized to a polynomial basis so you can see over/underfitting live.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#lr-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    let points = MLU.makeLinear({ n: 26, slope: 0.9, intercept: -1.5, noise: 2 })
-      .map((p) => ({ x: Math.max(DOMAIN[0], Math.min(DOMAIN[1], p.x)), y: Math.max(DOMAIN[0], Math.min(DOMAIN[1], p.y)) }));
-
-    const path = svg.append("path").attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2);
-    const ptsG = svg.append("g");
-
-    function degree() { return +document.getElementById("lr-degree").value; }
-    function lambda() { return +document.getElementById("lr-lambda").value / 10; }
-
-    function render() {
-      document.getElementById("lr-deg-val").textContent = degree();
-      document.getElementById("lr-lambda-val").textContent = lambda().toFixed(1);
-
-      let coeffs = [0, 0];
-      let r2 = 0;
-      if (points.length > degree()) {
-        coeffs = fitRidge(points, degree(), lambda());
-        const yMean = MLU.mean(points.map((p) => p.y));
-        let ssRes = 0, ssTot = 0;
-        for (const p of points) {
-          const pred = predict(coeffs, p.x);
-          ssRes += (p.y - pred) ** 2;
-          ssTot += (p.y - yMean) ** 2;
-        }
-        r2 = ssTot > 1e-9 ? 1 - ssRes / ssTot : 1;
-        const steps = 80;
-        const line = d3.line().x((d) => x(d[0])).y((d) => y(d[1]));
-        const pts2 = Array.from({ length: steps + 1 }, (_, i) => {
-          const xv = DOMAIN[0] + (i / steps) * (DOMAIN[1] - DOMAIN[0]);
-          return [xv, Math.max(DOMAIN[0] * 1.5, Math.min(DOMAIN[1] * 1.5, predict(coeffs, xv)))];
-        });
-        path.attr("d", line(pts2)).style("opacity", 1);
-      } else {
-        path.style("opacity", 0);
-      }
-
-      document.getElementById("lr-readout").innerHTML =
-        `points: <b>${points.length}</b><br>R²: <b class="num">${points.length > degree() ? r2.toFixed(3) : "–"}</b><br>` +
-        `&beta;: <span class="num">[${coeffs.map((c) => c.toFixed(2)).join(", ")}]</span>`;
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle")
-        .attr("r", 5).attr("fill", MLU.palette[0]).attr("stroke", "var(--bg)").attr("stroke-width", 1)
-        .style("cursor", "grab")
-        .merge(sel)
-        .attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y))
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
+    const lab = Lab.studio(root, {
+      id: "linreg",
+      fps: 8,
+      legend: ui.legend([["var(--accent)", "fitted curve", "line"], ["var(--series-2)", "residual", "line"], ["var(--series-1)", "data"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      hint: "click to add points · drag to move · double-click to delete",
+      plane: { xLabel: "x", yLabel: "y" },
+      data: { kind: "reg", presets: ["rlinear", "quad", "sine", "cubic", "step", "routliers", "hetero"], def: "rlinear", n: 40, noise: 0.3 },
+      side: [
+        { title: "model", html: ui.range("deg", "polynomial degree", 1, 9, 1, 1) + ui.range("lam", "ridge λ (log₁₀, −5 = off)", -5, 1, 0.25, -5, "off") },
+        { title: "solver", html: ui.select("solver", "method", [["gd", "gradient descent"], ["normal", "normal equation"]], "gd") + ui.range("lr", "learning rate η", 0.01, 1.2, 0.01, 0.3) + ui.range("ep", "epochs", 20, 1500, 10, 300) + ui.check("resid", "residual sticks", true) },
+      ],
+      arch: {
+        w: 380, h: 200,
+        nodes: [
+          { id: "x", label: "x", sub: "input", x: 34, y: 42, w: 46, kind: "data", info: "A single numeric feature (scaled to [−1, 1] internally)." },
+          { id: "basis", label: "φ(x)", sub: "1, x, …, x^d", x: 126, y: 42, kind: "op", info: "Basis expansion. A polynomial of degree d is still linear in its weights, so the same solver works.", tex: "\\phi(x)=[1,x,x^2,\\dots,x^d]" },
+          { id: "model", label: "wᵀφ", sub: "linear model", x: 236, y: 42, kind: "op", info: "A weighted sum of basis features.", tex: "\\hat y=w^\\top\\phi(x)" },
+          { id: "yhat", label: "ŷ", sub: "prediction", x: 336, y: 42, w: 56, kind: "out" },
+          { id: "loss", label: "MSE + λ‖w‖²", sub: "objective", x: 300, y: 140, kind: "loss", info: "Mean squared error plus the ridge penalty. Convex, so there is one global minimum.", tex: "L=\\tfrac1n\\lVert\\Phi w-y\\rVert^2+\\lambda\\lVert w\\rVert^2" },
+          { id: "grad", label: "∇L", sub: "gradient", x: 186, y: 140, kind: "op", tex: "\\nabla L=\\tfrac2n\\Phi^\\top(\\Phi w-y)+2\\lambda w" },
+          { id: "update", label: "w ← w − η∇L", sub: "step", x: 70, y: 140, kind: "param" },
+        ],
+        edges: [{ from: "x", to: "basis" }, { from: "basis", to: "model" }, { from: "model", to: "yhat" }, { from: "yhat", to: "loss" }, { from: "loss", to: "grad" }, { from: "grad", to: "update" }, { from: "update", to: "model", dash: true, label: "w" }],
+      },
+      phases: { init: { label: "init", color: 3 }, gd: { label: "gradient step", color: 0 }, basis: { label: "design matrix", color: 3 }, solve: { label: "normal eq.", color: 4 }, done: { label: "done", color: 2 }, diverged: { label: "diverged", color: 1 } },
+      panels: [{ id: "land", title: "loss landscape", sub: "w₀ (bias) × w₁ (slope) · degree 1 only" }],
+      charts: [{ id: "loss", title: "training loss", series: [{ key: "mse", label: "MSE", color: "var(--series-1)" }, { key: "gnorm", label: "‖∇L‖", color: "var(--series-4)", dash: "4 3" }], logY: true }],
+      onFrame: render,
+      onData: () => retrain(),
+    });
+    lab.editable({ newPoint: (x, y) => ({ x, y }), onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const params = () => ({ deg: lab.val("deg"), lam: lab.val("lam") <= -5 ? 0 : Math.pow(10, lab.val("lam")), solver: lab.val("solver"), lr: lab.val("lr"), epochs: lab.val("ep") });
+    let frames = [];
+    function retrain({ at = "start" } = {}) {
+      frames = buildFrames(lab.points, params());
+      lab.load(frames, { at, play: at === "start" });
+      drawLandscape();
     }
 
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py) });
-      render();
-    });
-    document.getElementById("lr-degree").addEventListener("input", render);
-    document.getElementById("lr-lambda").addEventListener("input", render);
-    document.getElementById("lr-regen").addEventListener("click", () => {
-      points = MLU.makeLinear({ n: 26, slope: MLU.randRange(-1.5, 1.5), intercept: MLU.randRange(-3, 3), noise: 2 })
-        .map((p) => ({ x: Math.max(DOMAIN[0], Math.min(DOMAIN[1], p.x)), y: Math.max(DOMAIN[0], Math.min(DOMAIN[1], p.y)) }));
-      render();
-    });
-    document.getElementById("lr-clear").addEventListener("click", () => { points = []; render(); });
+    // ---- loss landscape (degree 1 only)
+    const landEl = lab.R("panel-land");
+    let land = null;
+    function drawLandscape() {
+      landEl.innerHTML = "";
+      land = null;
+      const p = params();
+      if (p.deg !== 1 || lab.points.length < 2) {
+        landEl.innerHTML = `<div class="lab-card-note">${p.deg !== 1 ? "With degree > 1 the loss lives in " + (p.deg + 1) + " dimensions. The coefficient bars below show where gradient descent is heading." : "Add data to see the landscape."}</div><div data-coef></div>`;
+        land = { bars: Lab.bars(landEl.querySelector("[data-coef]"), { w: 360, h: 150, signed: true }) };
+        return;
+      }
+      const opt = closedForm(lab.points, 1, p.lam).w;
+      const span = Math.max(4, Math.abs(opt[0]) * 1.6, Math.abs(opt[1]) * 1.6);
+      const P = Lab.xy(landEl, { w: 360, h: 210, xd: [-span, span], yd: [-span, span], xLabel: "w₀ bias", yLabel: "w₁ slope", m: { l: 34, r: 8, t: 8, b: 20 } });
+      const res = 70, vals = [];
+      for (let j = 0; j < res; j++) for (let i = 0; i < res; i++) {
+        const w0 = -span + ((i + 0.5) / res) * 2 * span, w1 = span - ((j + 0.5) / res) * 2 * span;
+        vals.push(Math.log(mse(lab.points, [w0, w1], 1) + p.lam * w1 * w1 + 1e-6));
+      }
+      const lo = Math.min(...vals), hi = Math.max(...vals);
+      const cs = d3.contours().size([res, res]).thresholds(d3.range(lo, hi, (hi - lo) / 16))(vals);
+      const sx = (P.x.range()[1] - P.x.range()[0]) / res, sy = (P.y.range()[0] - P.y.range()[1]) / res;
+      const geo = d3.geoPath(d3.geoTransform({ point(px, py) { this.stream.point(P.x.range()[0] + px * sx, P.y.range()[1] + py * sy); } }));
+      P.g.selectAll("path.ct").data(cs).enter().append("path").attr("class", "ct").attr("d", geo).attr("fill", "none")
+        .attr("stroke", (d, i) => d3.interpolateRgb(Lab.pal()[0], Lab.pal()[1])(i / cs.length)).attr("stroke-opacity", 0.55).attr("stroke-width", 1);
+      P.g.append("path").attr("d", d3.symbol(d3.symbolStar, 70)()).attr("transform", `translate(${P.x(opt[0])},${P.y(opt[1])})`).attr("fill", "var(--series-3)");
+      land = { P };
+    }
+    function drawLandPath(i) {
+      if (!land) return;
+      const f = frames[i];
+      if (land.bars) { land.bars.set(f.st.w.map((v, k) => ({ label: "w" + k, value: v, color: v >= 0 ? col(0) : col(1) }))); return; }
+      const path = frames.slice(0, i + 1).filter((fr) => fr.st.w.length === 2).map((fr) => fr.st.w);
+      land.P.line("path", path, { color: "var(--accent)", width: 1.6, curve: d3.curveLinear });
+      const dots = land.P.top.selectAll("circle").data(path.length ? [path[path.length - 1]] : []);
+      dots.exit().remove();
+      dots.enter().append("circle").attr("r", 4.5).merge(dots).attr("cx", (d) => land.P.x(d[0])).attr("cy", (d) => land.P.y(d[1])).attr("fill", "var(--accent)");
+    }
 
-    render();
-    return () => {};
+    const curve = L.mid.append("path").attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2.4);
+    function render(f, i) {
+      const { deg } = params();
+      const w = f.st.w;
+      const xs = d3.range(-10, 10.01, 0.1);
+      curve.attr("d", f.st.hide ? null : d3.line().x((x) => pl.x(x)).y((x) => pl.y(Math.max(-14, Math.min(14, dot(w, phi(x, deg))))))(xs));
+      const res = L.links.selectAll("line").data(lab.val("resid") && !f.st.hide ? lab.points : []);
+      res.exit().remove();
+      res.enter().append("line").merge(res)
+        .attr("x1", (d) => pl.x(d.x)).attr("x2", (d) => pl.x(d.x)).attr("y1", (d) => pl.y(d.y)).attr("y2", (d) => pl.y(Math.max(-10, Math.min(10, dot(w, phi(d.x, deg))))))
+        .attr("stroke", "var(--series-2)").attr("stroke-width", 1.3).attr("stroke-opacity", 0.75);
+      lab.drawPoints({ color: (d) => (d.outlier ? "var(--series-4)" : "var(--series-1)") });
+      drawLandPath(i);
+      const pts = lab.points;
+      const eq = deg === 1 ? `ŷ = ${fmt(w[1] / S, 3)}·x ${w[0] >= 0 ? "+" : "−"} ${fmt(Math.abs(w[0]), 3)}` : `degree-${deg} polynomial`;
+      lab.readout(`<div class="kv"><span>fit</span><b>${eq}</b><span>MSE</span><b>${pts.length ? fmt(mse(pts, w, deg)) : "–"}</b><span>R²</span><b>${pts.length > 1 ? fmt(r2(pts, w, deg)) : "–"}</b><span>‖w‖</span><b>${fmt(Math.hypot(...w.slice(1)))}</b></div>`);
+    }
+
+    lab.watch(["deg", "lam", "solver", "lr", "ep"], () => retrain(), { format: { lam: (v) => (v <= -5 ? "off" : "1e" + v) } });
+    lab.watch(["resid"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("rlinear");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "linear-regression",
     name: "Linear Regression",
     category: "Supervised - Regression",
-    tagline: "ridge + polynomial basis",
-    description: "Ordinary/ridge regression fit via the normal equations, extended with a polynomial basis so you can watch under- and overfitting happen as you drag points and change degree/&lambda; live.",
+    tagline: "polynomial + ridge, GD vs normal equation",
+    description: "Fit a line or polynomial by least squares. Watch gradient descent walk down the loss surface frame by frame, compare it with the one-shot normal equation, and see ridge regularisation tame a high-degree fit.",
     info: {
       type: "Supervised - Regression. Parametric linear model (generalized here with a polynomial basis and an L2/ridge penalty).",
       scenario: "You need a simple, interpretable baseline for predicting a continuous target from numeric features - trend estimation, forecasting with few features, or as a first model before trying anything non-linear.",

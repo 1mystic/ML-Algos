@@ -1,142 +1,139 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-  const sigmoid = (z) => 1 / (1 + Math.exp(-z));
+  const { ui, col, fmt, sigmoid } = Lab;
+  const S = 9;
+  function feats(x, y, kind) {
+    const u = x / S, v = y / S;
+    return kind === "quad" ? [1, u, v, u * u, v * v, u * v] : [1, u, v];
+  }
+  const NAMES = { lin: ["b", "w₁·x", "w₂·y"], quad: ["b", "x", "y", "x²", "y²", "xy"] };
+  const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 
-  function trainGD(points, lr, iters, l2) {
-    let w = [0, 0, 0]; // bias, w1, w2
-    const n = points.length;
-    if (!n) return w;
-    for (let it = 0; it < iters; it++) {
-      const grad = [0, 0, 0];
-      for (const p of points) {
-        const z = w[0] + w[1] * p.x + w[2] * p.y;
-        const err = sigmoid(z) - p.label;
-        grad[0] += err; grad[1] += err * p.x; grad[2] += err * p.y;
-      }
-      w[0] -= lr * (grad[0] / n);
-      w[1] -= lr * (grad[1] / n + l2 * w[1]);
-      w[2] -= lr * (grad[2] / n + l2 * w[2]);
+  function stats(pts, w, kind, thr) {
+    let loss = 0, ok = 0;
+    for (const p of pts) {
+      const pr = sigmoid(dot(w, feats(p.x, p.y, kind)));
+      loss += -(p.label ? Math.log(pr + 1e-12) : Math.log(1 - pr + 1e-12));
+      if ((pr >= thr ? 1 : 0) === p.label) ok++;
     }
-    return w;
+    return { loss: pts.length ? loss / pts.length : 0, acc: pts.length ? ok / pts.length : 0 };
+  }
+
+  function buildFrames(pts, { kind, lr, epochs, lam, thr }) {
+    const P = feats(0, 0, kind).length;
+    if (!pts.some((p) => p.label === 0) || !pts.some((p) => p.label === 1))
+      return [{ phase: "idle", title: "Need both classes", text: "Add points of class 0 and class 1 (shift-click adds class 1).", st: { w: new Array(P).fill(0) } }];
+    const frames = [];
+    let w = new Array(P).fill(0);
+    const keep = new Set(Lab.checkpoints(epochs, 80));
+    for (let e = 0; e <= epochs; e++) {
+      const g = new Array(P).fill(0);
+      for (const p of pts) {
+        const f = feats(p.x, p.y, kind);
+        const err = sigmoid(dot(w, f)) - p.label;
+        for (let i = 0; i < P; i++) g[i] += (err * f[i]) / pts.length;
+      }
+      for (let i = 1; i < P; i++) g[i] += lam * w[i];
+      if (keep.has(e)) {
+        const s = stats(pts, w, kind, thr);
+        frames.push({
+          phase: e === 0 ? "init" : "gd", major: e === 0,
+          arch: e === 0 ? ["x", "feat", "z", "sig"] : ["z", "sig", "loss", "grad", "upd"],
+          title: e === 0 ? "w = 0: every point gets p = 0.5" : `Epoch ${e} · gradient step`,
+          text: e === 0
+            ? "With zero weights the model is maximally unsure. The field shows p(class 1 | x): saturated colour means confidence, pale means doubt."
+            : `Log-loss <b>${s.loss.toFixed(3)}</b>, accuracy <b>${(s.acc * 100).toFixed(1)}%</b>. The gradient is just each point's error (p − y) times its features: confident mistakes pull hardest.`,
+          tex: e === 0 ? "p(y{=}1\\mid x)=\\sigma(w^\\top\\phi(x))=\\frac{1}{1+e^{-w^\\top\\phi(x)}}" : "\\nabla L=\\frac1n\\sum_i\\big(\\sigma(w^\\top\\phi_i)-y_i\\big)\\,\\phi_i+\\lambda w",
+          st: { w: w.slice() }, m: { loss: s.loss, acc: s.acc },
+        });
+      }
+      for (let i = 0; i < P; i++) w[i] -= lr * g[i];
+    }
+    const last = frames[frames.length - 1];
+    const s = stats(pts, last.st.w, kind, thr);
+    frames.push({
+      ...last, phase: "done", major: true, arch: ["sig", "out"], title: "Trained",
+      text: `Final log-loss <b>${s.loss.toFixed(3)}</b>, accuracy <b>${(s.acc * 100).toFixed(1)}%</b>. The solid line is where p = ${thr}; the dashed lines are p = 0.25 and 0.75. ${kind === "lin" ? "A linear model can only draw a straight boundary, so rings and XOR defeat it. Switch the features to quadratic." : "Quadratic features let a linear model draw conics: circles, ellipses and hyperbolas."}`,
+    });
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[0]}"></span>class 0</span>
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[1]}"></span>class 1</span>
-            </div>
-            <div class="btn-row">
-              <button id="lg-regen">regenerate data</button>
-              <button id="lg-clear">clear</button>
-            </div>
-          </div>
-          <svg id="lg-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click to add class <b>0</b> · shift-click to add class <b>1</b> · double-click a point to remove</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>training</h3>
-            <div class="field"><label>learning rate <span class="val" id="lg-lr-val"></span></label>
-              <input type="range" id="lg-lr" min="1" max="50" step="1" value="20" /></div>
-            <div class="field"><label>L2 penalty <span class="val" id="lg-l2-val"></span></label>
-              <input type="range" id="lg-l2" min="0" max="50" step="1" value="0" /></div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="lg-readout">–</div>
-            <div class="note">Batch gradient descent on the log-loss. The background shading is P(class 1) = &sigma;(w&middot;x); the solid line is the 0.5 decision boundary.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#lg-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    let points = MLU.makeTwoClass({ n: 60, mode: "linear" });
-    const bgG = svg.append("g");
-    const boundary = svg.append("line").attr("stroke", "var(--accent)").attr("stroke-width", 2);
-    const ptsG = svg.append("g");
-
-    function lr() { return +document.getElementById("lg-lr").value / 100; }
-    function l2() { return +document.getElementById("lg-l2").value / 1000; }
-
-    function render() {
-      document.getElementById("lg-lr-val").textContent = lr().toFixed(2);
-      document.getElementById("lg-l2-val").textContent = l2().toFixed(3);
-      const w = trainGD(points, lr(), 400, l2());
-
-      const cell = 16;
-      const cells = [];
-      for (let px = PAD; px < W - PAD; px += cell)
-        for (let py = PAD; py < H - PAD; py += cell) {
-          const xv = x.invert(px + cell / 2), yv = y.invert(py + cell / 2);
-          const p = sigmoid(w[0] + w[1] * xv + w[2] * yv);
-          cells.push({ px, py, p });
-        }
-      const rects = bgG.selectAll("rect").data(cells);
-      rects.enter().append("rect").attr("width", cell).attr("height", cell)
-        .merge(rects)
-        .attr("x", (d) => d.px).attr("y", (d) => d.py)
-        .attr("fill", (d) => d3.interpolateRgb(MLU.palette[0], MLU.palette[1])(d.p))
-        .attr("opacity", 0.16);
-      rects.exit().remove();
-
-      if (Math.abs(w[2]) > 1e-6) {
-        const x1 = DOMAIN[0], x2 = DOMAIN[1];
-        const y1 = -(w[0] + w[1] * x1) / w[2], y2 = -(w[0] + w[1] * x2) / w[2];
-        boundary.attr("x1", x(x1)).attr("y1", y(y1)).attr("x2", x(x2)).attr("y2", y(y2)).style("opacity", 1);
-      } else boundary.style("opacity", 0);
-
-      let correct = 0;
-      for (const p of points) if ((sigmoid(w[0] + w[1] * p.x + w[2] * p.y) >= 0.5 ? 1 : 0) === p.label) correct++;
-      document.getElementById("lg-readout").innerHTML =
-        `points: <b>${points.length}</b><br>train accuracy: <b class="num">${points.length ? ((correct / points.length) * 100).toFixed(1) : "–"}%</b><br>` +
-        `w: <span class="num">[${w.map((v) => v.toFixed(2)).join(", ")}]</span>`;
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle")
-        .attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel)
-        .attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y))
-        .attr("fill", (d) => MLU.palette[d.label])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-    }
-
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), label: event.shiftKey ? 1 : 0 });
-      render();
+    const lab = Lab.studio(root, {
+      id: "logreg", fps: 8, classes: 2,
+      legend: ui.legend([["var(--text)", "p = threshold", "line"], ["var(--text)", "p = 0.25 / 0.75", "dash"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      hint: "click adds the selected class · shift-click adds class 1 · drag / double-click to edit",
+      data: { kind: "class", presets: ["linear", "overlap", "blobs2", "imbalanced", "circles", "moons", "xor"], def: "linear", n: 80, noise: 0.3 },
+      side: [
+        { title: "features", html: ui.select("kind", "basis φ(x)", [["lin", "linear: x, y"], ["quad", "quadratic: + x², y², xy"]], "lin") + ui.range("lam", "L2 strength λ", 0, 0.2, 0.005, 0) },
+        { title: "optimiser", html: ui.range("lr", "learning rate η", 0.05, 8, 0.05, 2) + ui.range("ep", "epochs", 20, 1500, 10, 400) + ui.range("thr", "decision threshold", 0.05, 0.95, 0.05, 0.5) },
+      ],
+      arch: {
+        w: 380, h: 200,
+        nodes: [
+          { id: "x", label: "x", sub: "(x₁, x₂)", x: 32, y: 42, w: 50, kind: "data" },
+          { id: "feat", label: "φ(x)", sub: "features", x: 112, y: 42, kind: "op", info: "Optional basis expansion. Quadratic terms make curved boundaries possible while the model stays linear in w." },
+          { id: "z", label: "z = wᵀφ", sub: "logit", x: 210, y: 42, kind: "op", info: "The log-odds. The decision boundary is the set where z = logit(threshold)." },
+          { id: "sig", label: "σ(z)", sub: "probability", x: 310, y: 42, kind: "op", tex: "\\sigma(z)=1/(1+e^{-z})" },
+          { id: "out", label: "p ≥ t ?", sub: "class", x: 340, y: 120, w: 64, kind: "out" },
+          { id: "loss", label: "log-loss", sub: "−y log p − (1−y) log(1−p)", x: 220, y: 160, kind: "loss", tex: "L=-\\tfrac1n\\sum y\\log p+(1-y)\\log(1-p)" },
+          { id: "grad", label: "∇L", sub: "Σ(p−y)φ", x: 110, y: 160, w: 70, kind: "op" },
+          { id: "upd", label: "w ← w − η∇L", x: 50, y: 112, kind: "param" },
+        ],
+        edges: [{ from: "x", to: "feat" }, { from: "feat", to: "z" }, { from: "z", to: "sig" }, { from: "sig", to: "out" }, { from: "sig", to: "loss" }, { from: "loss", to: "grad" }, { from: "grad", to: "upd" }, { from: "upd", to: "z", dash: true, label: "w" }],
+      },
+      phases: { init: { label: "init", color: 3 }, gd: { label: "gradient step", color: 0 }, done: { label: "trained", color: 2 } },
+      panels: [{ id: "sig", title: "every point on the sigmoid", sub: "x-axis: its logit z · y: its label" }],
+      charts: [{ id: "loss", title: "loss & accuracy", series: [{ key: "loss", label: "log-loss", color: "var(--series-1)" }, { key: "acc", label: "accuracy", color: "var(--series-3)", dash: "4 3" }] }],
+      onFrame: render, onData: () => retrain(),
     });
-    document.getElementById("lg-lr").addEventListener("input", render);
-    document.getElementById("lg-l2").addEventListener("input", render);
-    document.getElementById("lg-regen").addEventListener("click", () => { points = MLU.makeTwoClass({ n: 60, mode: "linear" }); render(); });
-    document.getElementById("lg-clear").addEventListener("click", () => { points = []; render(); });
+    lab.editable({ onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const params = () => ({ kind: lab.val("kind"), lr: lab.val("lr"), epochs: lab.val("ep"), lam: lab.val("lam"), thr: lab.val("thr") });
+    function retrain({ at = "start" } = {}) { lab.load(buildFrames(lab.points, params()), { at, play: at === "start" }); }
 
-    render();
-    return () => {};
+    const sigEl = lab.R("panel-sig");
+    const SP = Lab.xy(sigEl, { w: 360, h: 150, xd: [-8, 8], yd: [-0.1, 1.1], xLabel: "z", yLabel: "p" });
+    SP.line("sig", d3.range(-8, 8.01, 0.1).map((z) => [z, sigmoid(z)]), { color: "var(--text-dim)", width: 1.6 });
+
+    function render(f) {
+      const { kind, thr } = params();
+      const w = f.st.w;
+      const prob = (x, y) => sigmoid(dot(w, feats(x, y, kind)));
+      const grid = Lab.sampleGrid(pl, prob, 90);
+      Lab.paintGrid(L.bg, pl, grid, (p) => Lab.probColor(p, 0.5));
+      Lab.contour(L.under, pl, grid, [thr], { cls: "iso-main", width: 2 });
+      Lab.contour(L.under, pl, grid, [0.25, 0.75], { cls: "iso-dash", width: 1, dash: "4 4", stroke: "var(--text-dim)" });
+      lab.drawPoints({
+        color: (d) => col(d.label),
+        stroke: (d) => ((prob(d.x, d.y) >= thr ? 1 : 0) !== d.label ? "var(--text)" : "var(--bg)"),
+        sw: (d) => ((prob(d.x, d.y) >= thr ? 1 : 0) !== d.label ? 2 : 1.1),
+      });
+      // sigmoid panel: each point at its logit
+      const zs = lab.points.map((p, i) => ({ z: Math.max(-8, Math.min(8, dot(w, feats(p.x, p.y, kind)))), l: p.label, j: ((i * 37) % 11) / 110 }));
+      const dots = SP.g.selectAll("circle").data(zs);
+      dots.exit().remove();
+      dots.enter().append("circle").attr("r", 3).merge(dots).transition().duration(120)
+        .attr("cx", (d) => SP.x(d.z)).attr("cy", (d) => SP.y(d.l ? 1 - d.j : d.j)).attr("fill", (d) => col(d.l)).attr("opacity", 0.75);
+      const zt = Math.log(thr / (1 - thr));
+      SP.vline(zt, "thr-line");
+      const s = stats(lab.points, w, kind, thr);
+      const names = NAMES[kind];
+      lab.readout(`<div class="kv">${w.map((v, k) => `<span>${names[k]}</span><b>${fmt(v)}</b>`).join("")}<span>log-loss</span><b>${fmt(s.loss)}</b><span>accuracy</span><b>${(s.acc * 100).toFixed(1)}%</b></div><div class="note">outlined points are misclassified at the current threshold</div>`);
+    }
+    lab.watch(["kind", "lr", "ep", "lam"], () => retrain());
+    lab.watch(["thr"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("linear");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "logistic-regression",
     name: "Logistic Regression",
     category: "Supervised - Classification",
-    tagline: "gradient descent, linear boundary",
-    description: "Binary classifier trained with batch gradient descent on the log-loss. Background shading shows the predicted probability surface; the line is the 0.5 decision boundary.",
+    tagline: "sigmoid + log-loss, animated gradient descent",
+    description: "A linear model for class probabilities. Watch the probability field sharpen epoch by epoch, see every point slide along the sigmoid, and add quadratic features to bend the boundary around rings and XOR.",
     info: {
       type: "Supervised - Binary classification. Linear discriminative model (a generalized linear model with a logit/sigmoid link).",
       scenario: "Binary outcomes where you want calibrated probabilities and an interpretable, linear decision boundary - e.g. churn, click-through, disease presence, credit default.",

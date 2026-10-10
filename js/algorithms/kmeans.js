@@ -1,147 +1,272 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
+  const { ui, col } = Lab;
+
+  const d2 = (p, c) => (p.x - c[0]) ** 2 + (p.y - c[1]) ** 2;
+  function inertia(pts, cents, assign) {
+    let s = 0;
+    for (let i = 0; i < pts.length; i++) if (assign[i] >= 0) s += d2(pts[i], cents[assign[i]]);
+    return s;
+  }
+  function nearest(p, cents) {
+    let b = 0, bd = Infinity;
+    for (let j = 0; j < cents.length; j++) { const d = d2(p, cents[j]); if (d < bd) { bd = d; b = j; } }
+    return b;
+  }
+  function seedPlusPlus(pts, k, record) {
+    const n = pts.length;
+    const first = MLU.randInt(n);
+    const cents = [[pts[first].x, pts[first].y]];
+    if (record) record(cents, null, first);
+    while (cents.length < k) {
+      const D = pts.map((p) => Math.min(...cents.map((c) => d2(p, c))));
+      const tot = D.reduce((a, b) => a + b, 0) || 1;
+      let r = MLU.rng() * tot, idx = 0;
+      for (; idx < n - 1; idx++) { r -= D[idx]; if (r <= 0) break; }
+      if (record) record(cents, D.map((v) => v / tot), idx);
+      cents.push([pts[idx].x, pts[idx].y]);
+    }
+    return cents;
+  }
+  // Full Lloyd run without recording, used by the elbow scan.
+  function quickKMeans(pts, k) {
+    let cents = seedPlusPlus(pts, k);
+    let assign = new Int16Array(pts.length).fill(-1);
+    for (let it = 0; it < 60; it++) {
+      let changed = 0;
+      for (let i = 0; i < pts.length; i++) { const b = nearest(pts[i], cents); if (b !== assign[i]) { changed++; assign[i] = b; } }
+      cents = cents.map((c, j) => {
+        let sx = 0, sy = 0, m = 0;
+        for (let i = 0; i < pts.length; i++) if (assign[i] === j) { sx += pts[i].x; sy += pts[i].y; m++; }
+        return m ? [sx / m, sy / m] : c;
+      });
+      if (!changed) break;
+    }
+    return { cents, assign, J: inertia(pts, cents, assign) };
+  }
+  function silhouette(pts, assign, k) {
+    if (k < 2 || pts.length < 3) return null;
+    let tot = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const sums = new Array(k).fill(0), cnt = new Array(k).fill(0);
+      for (let j = 0; j < pts.length; j++) if (i !== j) { const d = Math.sqrt(d2(pts[i], [pts[j].x, pts[j].y])); sums[assign[j]] += d; cnt[assign[j]]++; }
+      const own = assign[i];
+      const a = cnt[own] ? sums[own] / cnt[own] : 0;
+      let b = Infinity;
+      for (let c = 0; c < k; c++) if (c !== own && cnt[c]) b = Math.min(b, sums[c] / cnt[c]);
+      if (!isFinite(b)) continue;
+      tot += (b - a) / Math.max(a, b, 1e-9);
+    }
+    return tot / pts.length;
+  }
+
+  function buildFrames(pts, k, init) {
+    const n = pts.length;
+    if (!n) return [{ phase: "idle", title: "No data yet", text: "Pick an example dataset or click the canvas to add points.", arch: ["data"], st: { cents: [], assign: new Int16Array(0) } }];
+    k = Math.min(k, n);
+    const frames = [];
+    const none = new Int16Array(n).fill(-1);
+    let cents;
+    if (init === "kmeans++") {
+      cents = seedPlusPlus(pts, k, (cs, w, pick) => {
+        frames.push({
+          phase: "seed", arch: ["data", "seed"],
+          title: cs.length === 1 && !w ? "k-means++: first centroid is a uniformly random point" : `k-means++: choosing centroid ${cs.length + 1} of ${k}`,
+          text: w ? "Each point's size is its probability of being picked next. Points far from every existing centroid are much more likely, which spreads the seeds out." : "One data point is chosen at random to be the first centre.",
+          tex: w ? "P(x)=\\dfrac{D(x)^2}{\\sum_{x'} D(x')^2},\\quad D(x)=\\min_j \\lVert x-\\mu_j\\rVert" : null,
+          st: { cents: cs.map((c) => c.slice()), assign: none, w, pick },
+        });
+      });
+    } else {
+      const idx = MLU.shuffle([...Array(n).keys()]).slice(0, k);
+      cents = idx.map((i) => [pts[i].x, pts[i].y]);
+    }
+    frames.push({
+      phase: "seed", major: true, arch: ["seed"],
+      title: `${k} initial centroids placed`, text: init === "kmeans++" ? "Seeding done. Now Lloyd's algorithm alternates two steps until nothing changes." : "Random init: k data points picked uniformly. Try a few reruns to see how often this lands in a poor local minimum.",
+      st: { cents: cents.map((c) => c.slice()), assign: none },
+    });
+    let assign = none;
+    for (let it = 1; it <= 60; it++) {
+      const na = new Int16Array(n);
+      let changed = 0;
+      for (let i = 0; i < n; i++) { na[i] = nearest(pts[i], cents); if (na[i] !== assign[i]) changed++; }
+      assign = na;
+      const J = inertia(pts, cents, assign);
+      frames.push({
+        phase: "assign", major: true, arch: ["assign", "data"],
+        title: `Iteration ${it} · assignment step`,
+        text: `Every point joins its nearest centroid. <b>${changed}</b> point${changed === 1 ? "" : "s"} changed cluster. Inertia is now <b>${J.toFixed(1)}</b>.`,
+        tex: "c_i=\\arg\\min_{j}\\;\\lVert x_i-\\mu_j\\rVert^2",
+        st: { cents: cents.map((c) => c.slice()), assign: na, links: true }, m: { inertia: J, changed },
+      });
+      if (changed === 0) {
+        frames.push({
+          phase: "done", major: true, arch: ["check", "out"],
+          title: `Converged after ${it - 1} update${it - 1 === 1 ? "" : "s"}`,
+          text: `No point changed cluster, so the next update would leave every centroid where it is. Final inertia <b>${J.toFixed(1)}</b>. This is a local minimum: rerun with a different seed to see whether a better one exists.`,
+          tex: "J=\\sum_{j=1}^{k}\\sum_{x_i\\in C_j}\\lVert x_i-\\mu_j\\rVert^2",
+          st: { cents: cents.map((c) => c.slice()), assign: na }, m: { inertia: J, changed: 0 },
+        });
+        break;
+      }
+      const prev = cents.map((c) => c.slice());
+      cents = cents.map((c, j) => {
+        let sx = 0, sy = 0, m = 0;
+        for (let i = 0; i < n; i++) if (na[i] === j) { sx += pts[i].x; sy += pts[i].y; m++; }
+        return m ? [sx / m, sy / m] : c;
+      });
+      const shift = Math.max(...cents.map((c, j) => Math.hypot(c[0] - prev[j][0], c[1] - prev[j][1])));
+      const J2 = inertia(pts, cents, na);
+      frames.push({
+        phase: "update", arch: ["update"],
+        title: `Iteration ${it} · update step`,
+        text: `Each centroid jumps to the mean of its members. Largest move: <b>${shift.toFixed(2)}</b>. Inertia drops from ${J.toFixed(1)} to <b>${J2.toFixed(1)}</b>, and it can never rise.`,
+        tex: "\\mu_j \\leftarrow \\frac{1}{|C_j|}\\sum_{x_i\\in C_j} x_i",
+        st: { cents: cents.map((c) => c.slice()), prev, assign: na, links: true }, m: { inertia: J2, changed: 0 },
+      });
+    }
+    return frames;
+  }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint" style="font-size:11.5px">iteration <b id="km-iter">0</b></span></div>
-            <div class="btn-row">
-              <button id="km-step" class="primary">step</button>
-              <button id="km-run">run to convergence</button>
-              <button id="km-reset-c">reset centroids</button>
-              <button id="km-regen">regenerate data</button>
-              <button id="km-clear">clear</button>
-            </div>
-          </div>
-          <svg id="km-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">click to add data points · each "step" = one Lloyd iteration (reassign, then re-average)</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>k = <span class="val" id="km-k-val">3</span></h3>
-            <input type="range" id="km-k" min="1" max="7" step="1" value="3" />
-          </div>
-          <div class="control-card">
-            <h3>state</h3>
-            <div class="readout" id="km-readout">–</div>
-            <div class="note">Lloyd's algorithm: assign each point to its closest centroid, then move each centroid to the mean of its assigned points, repeat.</div>
-          </div>
-        </div>
-      </div>
-    `;
+    const lab = Lab.studio(root, {
+      id: "kmeans",
+      fps: 2.2,
+      legend: ui.legend([["var(--text)", "centroid", "ring"], ["var(--text-faint)", "trail", "line"]]),
+      tools: ui.btn("rerun", "rerun (new seed)", true, "re-initialise the centroids and replay") + ui.btn("elbow", "elbow scan", false, "run k = 1…8 and plot inertia and silhouette"),
+      hint: "click to add points · drag to move · double-click to delete · the run is re-recorded after every edit",
+      data: { kind: "cluster", presets: ["blobs4", "blobs3", "blobs5", "aniso", "varied", "moons", "circles", "outliers", "uniform"], def: "blobs4", n: 140, noise: 0.25 },
+      side: [
+        { title: "model", html: ui.range("k", "k (clusters)", 1, 8, 1, 4) + ui.select("init", "initialisation", [["kmeans++", "k-means++"], ["random", "random points"]], "kmeans++") },
+        { title: "view", html: ui.check("vor", "Voronoi regions", true) + ui.check("links", "assignment links", true) + ui.check("trail", "centroid trails", true) },
+      ],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "data", label: "data X", sub: "n × 2, unlabeled", x: 52, y: 40, kind: "data", info: "The raw, unlabeled points. Features should be on comparable scales: k-means is pure distance." },
+          { id: "seed", label: "seed", sub: "k-means++", x: 52, y: 130, kind: "param", info: "Choose k starting centroids. k-means++ samples each new seed with probability ∝ squared distance to the nearest existing seed.", tex: "P(x)\\propto D(x)^2" },
+          { id: "assign", label: "assign", sub: "argmin distance", x: 190, y: 40, kind: "op", info: "Hold centroids fixed and give every point to its nearest one. This is the optimal assignment for fixed centroids.", tex: "c_i=\\arg\\min_j\\lVert x_i-\\mu_j\\rVert^2" },
+          { id: "update", label: "update", sub: "mean of members", x: 190, y: 130, kind: "op", info: "Hold assignments fixed and move each centroid to its members' mean, the point minimising summed squared distance.", tex: "\\mu_j=\\tfrac{1}{|C_j|}\\textstyle\\sum_{C_j}x_i" },
+          { id: "check", label: "converged?", sub: "no reassignment", x: 318, y: 130, kind: "loss", info: "Stop when an assignment step changes nothing. Inertia J decreased monotonically on the way here." },
+          { id: "out", label: "labels + μ", sub: "partition", x: 318, y: 40, kind: "out", info: "One cluster id per point and k centroids. Clusters are convex Voronoi cells." },
+        ],
+        edges: [
+          { from: "data", to: "assign" }, { from: "seed", to: "assign", label: "μ⁰" }, { from: "assign", to: "update" },
+          { from: "update", to: "assign", bend: -26, dash: true, label: "repeat" }, { from: "update", to: "check" }, { from: "check", to: "out", label: "yes" },
+        ],
+      },
+      phases: { seed: { label: "seed", color: 3 }, assign: { label: "assign", color: 0 }, update: { label: "update", color: 2 }, done: { label: "converged", color: 2 }, idle: { label: "idle" } },
+      charts: [
+        { id: "inertia", title: "inertia J per step", series: [{ key: "inertia", label: "J", color: "var(--series-1)", digits: 1 }] },
+        { id: "elbow", title: "choosing k: elbow & silhouette", custom: true, note: "Inertia always falls as k grows; look for the bend. Silhouette (higher is better) peaks near the natural k." },
+      ],
+      onFrame: render,
+      onData: () => rerun(),
+    });
+    lab.editable({ newPoint: (x, y) => ({ x, y, label: 0 }), onChange: () => rerun({ at: "end" }) });
 
-    const svg = d3.select("#km-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
+    const pl = lab.plane;
+    const L = pl.layers;
+    let seed = 11;
+    let elbowData = null;
+    const elbowEl = lab.charts.elbow.el;
 
-    let points = MLU.makeBlobs({ n: 70, clusters: 4 }).map((p) => ({ x: p.x, y: p.y, c: 0 }));
-    let centroids = [];
-    let iter = 0;
-
-    function k() { return +document.getElementById("km-k").value; }
-    function initCentroids() {
-      const shuffled = MLU.shuffle(points);
-      centroids = Array.from({ length: k() }, (_, i) => shuffled[i % Math.max(shuffled.length, 1)]
-        ? { x: shuffled[i % shuffled.length].x, y: shuffled[i % shuffled.length].y }
-        : { x: MLU.randRange(...DOMAIN), y: MLU.randRange(...DOMAIN) });
-      iter = 0;
+    function rerun({ at = "start", play = true } = {}) {
+      MLU.seedRng(seed);
+      const frames = buildFrames(lab.points, lab.val("k"), lab.val("init"));
+      lab.load(frames, { at, play: play && at === "start" });
+      drawElbow();
     }
-    initCentroids();
 
-    function assign() {
-      let moved = false;
-      for (const p of points) {
-        let best = 0, bestD = Infinity;
-        for (let i = 0; i < centroids.length; i++) {
-          const d = MLU.dist2(p, centroids[i]);
-          if (d < bestD) { bestD = d; best = i; }
-        }
-        if (p.c !== best) moved = true;
-        p.c = best;
+    function drawElbow() {
+      elbowEl.innerHTML = "";
+      const P = Lab.xy(elbowEl, { w: 360, h: 130, xd: [1, 8], yd: [0, 1.05], xLabel: "k" });
+      if (!elbowData) { P.g.append("text").attr("class", "ax-label").attr("x", 180).attr("y", 62).attr("text-anchor", "middle").text("press “elbow scan” to compute"); return; }
+      const J1 = elbowData[0].J || 1;
+      P.line("j", elbowData.map((d) => [d.k, d.J / J1]), { color: "var(--series-1)" });
+      P.line("s", elbowData.filter((d) => d.s != null).map((d) => [d.k, Math.max(0, d.s)]), { color: "var(--series-3)", dash: "4 3" });
+      P.g.selectAll("circle").data(elbowData).enter().append("circle").attr("cx", (d) => P.x(d.k)).attr("cy", (d) => P.y(d.J / J1)).attr("r", (d) => (d.k === lab.val("k") ? 5 : 2.8))
+        .attr("fill", (d) => (d.k === lab.val("k") ? "var(--accent)" : "var(--series-1)"));
+      const best = elbowData.filter((d) => d.s != null).sort((a, b) => b.s - a.s)[0];
+      const head = elbowEl.closest(".lab-card").querySelector(".chart-legend");
+      head.innerHTML = `<span class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>J / J₁</span><span class="legend-item"><span class="swatch" style="background:var(--series-3)"></span>silhouette · best k=<b>${best ? best.k : "–"}</b></span>`;
+    }
+    function elbowScan() {
+      if (lab.points.length < 3) return;
+      MLU.seedRng(99);
+      elbowData = [];
+      for (let k = 1; k <= 8; k++) {
+        let best = null;
+        for (let r = 0; r < 4; r++) { const res = quickKMeans(lab.points, Math.min(k, lab.points.length)); if (!best || res.J < best.J) best = res; }
+        elbowData.push({ k, J: best.J, s: k > 1 ? silhouette(lab.points, best.assign, k) : null });
       }
-      return moved;
-    }
-    function update() {
-      let maxShift = 0;
-      for (let i = 0; i < centroids.length; i++) {
-        const members = points.filter((p) => p.c === i);
-        if (!members.length) continue;
-        const nx = MLU.mean(members.map((p) => p.x)), ny = MLU.mean(members.map((p) => p.y));
-        maxShift = Math.max(maxShift, MLU.dist({ x: nx, y: ny }, centroids[i]));
-        centroids[i].x = nx; centroids[i].y = ny;
-      }
-      return maxShift;
-    }
-    function inertia() {
-      return points.reduce((s, p) => s + (centroids[p.c] ? MLU.dist2(p, centroids[p.c]) : 0), 0);
+      drawElbow();
     }
 
-    const ptsG = svg.append("g");
-    const cenG = svg.append("g");
+    const trailG = L.mid.append("g"), linkG = L.links, cenG = L.top.append("g");
+    function render(f, i, all) {
+      const st = f.st;
+      const n = lab.points.length;
+      // Voronoi regions behind everything
+      if (lab.val("vor") && st.cents.length) {
+        Lab.field(L.bg, pl, (x, y) => nearest({ x, y }, st.cents), (k) => Lab.classColor(k, 1, 0.16), { res: 200 });
+      } else L.bg.selectAll("*").remove();
+      // assignment links
+      const showLinks = lab.val("links") && st.links;
+      const lk = linkG.selectAll("line").data(showLinks ? lab.points.map((p, idx) => ({ p, c: st.assign[idx] })).filter((d) => d.c >= 0) : []);
+      lk.exit().remove();
+      lk.enter().append("line").merge(lk)
+        .attr("x1", (d) => pl.x(d.p.x)).attr("y1", (d) => pl.y(d.p.y))
+        .attr("x2", (d) => pl.x(st.cents[d.c][0])).attr("y2", (d) => pl.y(st.cents[d.c][1]))
+        .attr("stroke", (d) => col(d.c)).attr("stroke-opacity", 0.22).attr("stroke-width", 0.8);
+      // points
+      lab.drawPoints({
+        color: (d, idx) => (st.assign[idx] >= 0 ? col(st.assign[idx]) : "var(--text-faint)"),
+        r: (d, idx) => (st.w ? 2.5 + Math.min(9, Math.sqrt(st.w[idx] * n) * 3.2) : 4.4),
+        stroke: (d, idx) => (st.pick === idx && st.w ? "var(--accent)" : "var(--bg)"),
+        sw: (d, idx) => (st.pick === idx && st.w ? 2.5 : 1.1),
+      });
+      // centroid trails up to this frame
+      const trails = st.cents.map((_, j) => all.slice(0, i + 1).filter((fr) => fr.st.cents[j]).map((fr) => fr.st.cents[j]));
+      const tr = trailG.selectAll("path").data(lab.val("trail") ? trails : []);
+      tr.exit().remove();
+      tr.enter().append("path").merge(tr)
+        .attr("d", (t) => d3.line().x((c) => pl.x(c[0])).y((c) => pl.y(c[1]))(t.filter((c, q) => q === 0 || c[0] !== t[q - 1][0] || c[1] !== t[q - 1][1])))
+        .attr("fill", "none").attr("stroke", (t, j) => col(j)).attr("stroke-width", 1.6).attr("stroke-dasharray", "3 3").attr("opacity", 0.8);
+      // centroids (animate from previous position on update steps)
+      const cs = cenG.selectAll("g.cent").data(st.cents);
+      cs.exit().remove();
+      const ent = cs.enter().append("g").attr("class", "cent no-add");
+      ent.append("circle").attr("r", 11).attr("fill", "var(--bg-inset)").attr("fill-opacity", 0.55).attr("stroke-width", 2.6);
+      ent.append("path").attr("d", "M-5,0H5M0,-5V5").attr("stroke-width", 2);
+      const m = ent.merge(cs);
+      m.select("circle").attr("stroke", (d, j) => col(j));
+      m.select("path").attr("stroke", (d, j) => col(j));
+      if (st.prev) {
+        m.attr("transform", (d, j) => `translate(${pl.x(st.prev[j][0])},${pl.y(st.prev[j][1])})`)
+          .transition().duration(520).ease(d3.easeCubicInOut).attr("transform", (d) => `translate(${pl.x(d[0])},${pl.y(d[1])})`);
+      } else m.interrupt().attr("transform", (d) => `translate(${pl.x(d[0])},${pl.y(d[1])})`);
 
-    function render() {
-      document.getElementById("km-k-val").textContent = k();
-      document.getElementById("km-iter").textContent = iter;
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y))
-        .attr("fill", (d) => MLU.palette[d.c % MLU.palette.length])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-
-      const csel = cenG.selectAll("g.centroid").data(centroids);
-      const enter = csel.enter().append("g").attr("class", "centroid");
-      enter.append("circle").attr("r", 10).attr("fill", "none").attr("stroke-width", 2.5);
-      enter.append("circle").attr("r", 3).attr("stroke", "none");
-      const merged = enter.merge(csel);
-      merged.attr("transform", (d) => `translate(${x(d.x)},${y(d.y)})`);
-      merged.select("circle:nth-child(1)").attr("stroke", (d, i) => MLU.palette[i % MLU.palette.length]);
-      merged.select("circle:nth-child(2)").attr("fill", (d, i) => MLU.palette[i % MLU.palette.length]);
-      csel.exit().remove();
-
-      document.getElementById("km-readout").innerHTML =
-        `points: <b>${points.length}</b><br>k: <b>${centroids.length}</b><br>inertia (SSE): <b class="num">${points.length ? inertia().toFixed(1) : "–"}</b>`;
+      const J = st.assign[0] >= 0 ? inertia(lab.points, st.cents, st.assign) : null;
+      const sizes = st.cents.map((_, j) => st.assign.reduce((s, a) => s + (a === j), 0));
+      lab.readout(`<div class="kv"><span>points</span><b>${n}</b><span>k</span><b>${st.cents.length}</b><span>inertia J</span><b>${J == null ? "–" : J.toFixed(1)}</b><span>cluster sizes</span><b>${st.assign[0] >= 0 ? sizes.join(" · ") : "–"}</b></div>`);
     }
 
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), c: 0 });
-      render();
-    });
-    document.getElementById("km-k").addEventListener("input", () => { initCentroids(); render(); });
-    document.getElementById("km-step").addEventListener("click", () => { assign(); update(); iter++; render(); });
-    document.getElementById("km-run").addEventListener("click", () => {
-      for (let i = 0; i < 100; i++) { const moved = assign(); const shift = update(); iter++; if (!moved && shift < 1e-3) break; }
-      render();
-    });
-    document.getElementById("km-reset-c").addEventListener("click", () => { initCentroids(); render(); });
-    document.getElementById("km-regen").addEventListener("click", () => {
-      points = MLU.makeBlobs({ n: 70, clusters: 4 }).map((p) => ({ x: p.x, y: p.y, c: 0 }));
-      initCentroids(); render();
-    });
-    document.getElementById("km-clear").addEventListener("click", () => { points = []; initCentroids(); render(); });
+    lab.watch(["k", "init"], () => { elbowData && drawElbow(); rerun(); });
+    lab.watch(["vor", "links", "trail"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="rerun"]').onclick = () => { seed = (seed * 7 + 13) % 10007; rerun(); };
+    lab.q('[data-b="elbow"]').onclick = elbowScan;
 
-    render();
-    return () => {};
+    lab.loadPreset("blobs4");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "kmeans",
     name: "K-Means",
     category: "Unsupervised - Clustering",
-    tagline: "Lloyd's algorithm, step-through",
-    description: "Hard clustering via alternating assignment and centroid-averaging. Step through iterations one at a time to see exactly how the centroids converge.",
+    tagline: "k-means++ seeding, animated Lloyd steps",
+    description: "Hard clustering by alternating assignment and centroid-averaging. Watch k-means++ spread its seeds, then step through every assign and update move, with Voronoi regions, centroid trails and an elbow/silhouette scan for choosing k.",
     info: {
       type: "Unsupervised - Clustering. Centroid-based, hard assignment.",
       scenario: "Partitioning unlabeled data into k compact, roughly spherical groups - customer segmentation, color quantization, or as an unsupervised pre-processing step.",

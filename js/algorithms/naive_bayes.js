@@ -1,139 +1,156 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-  const N_CLASSES = 3;
+  const { ui, col, fmt } = Lab;
+  const NC = 3;
+  const gauss = (x, m, v) => Math.exp(-((x - m) ** 2) / (2 * v)) / Math.sqrt(2 * Math.PI * v);
+  const lgauss = (x, m, v) => -((x - m) ** 2) / (2 * v) - 0.5 * Math.log(2 * Math.PI * v);
 
-  function fitGaussianNB(points) {
-    const classes = [];
-    for (let c = 0; c < N_CLASSES; c++) {
-      const pts = points.filter((p) => p.label === c);
-      if (!pts.length) { classes.push(null); continue; }
-      const mx = MLU.mean(pts.map((p) => p.x)), my = MLU.mean(pts.map((p) => p.y));
-      const sx = MLU.std(pts.map((p) => p.x)), sy = MLU.std(pts.map((p) => p.y));
-      classes.push({ mx, my, sx: Math.max(sx, 0.4), sy: Math.max(sy, 0.4), prior: pts.length / points.length });
+  function fit(pts, smooth, uniformPrior) {
+    const allVar = Math.max(MLU.std(pts.map((p) => p.x)) ** 2, MLU.std(pts.map((p) => p.y)) ** 2);
+    const eps = smooth * allVar;
+    const cls = [];
+    for (let c = 0; c < NC; c++) {
+      const m = pts.filter((p) => p.label === c);
+      if (!m.length) { cls.push(null); continue; }
+      const mx = MLU.mean(m.map((p) => p.x)), my = MLU.mean(m.map((p) => p.y));
+      const vx = MLU.mean(m.map((p) => (p.x - mx) ** 2)) + eps, vy = MLU.mean(m.map((p) => (p.y - my) ** 2)) + eps;
+      cls.push({ c, n: m.length, prior: m.length / pts.length, mx, my, vx, vy });
     }
-    return classes;
+    const present = cls.filter(Boolean).length;
+    if (uniformPrior) cls.forEach((k) => k && (k.prior = 1 / present));
+    return cls;
   }
-  function logGauss(v, m, s) { return -0.5 * Math.log(2 * Math.PI * s * s) - ((v - m) ** 2) / (2 * s * s); }
-  function predict(model, pt) {
-    let best = -1, bestScore = -Infinity, scores = [];
-    for (let c = 0; c < N_CLASSES; c++) {
-      const m = model[c];
-      if (!m) { scores.push(-Infinity); continue; }
-      const score = Math.log(m.prior) + logGauss(pt.x, m.mx, m.sx) + logGauss(pt.y, m.my, m.sy);
-      scores.push(score);
-      if (score > bestScore) { bestScore = score; best = c; }
-    }
-    return { label: best, scores };
+  function posterior(model, x, y, upto = NC) {
+    const lp = model.map((k, c) => (k && c < upto ? Math.log(k.prior) + lgauss(x, k.mx, k.vx) + lgauss(y, k.my, k.vy) : -Infinity));
+    const mx = Math.max(...lp);
+    const e = lp.map((v) => (isFinite(v) ? Math.exp(v - mx) : 0));
+    const s = e.reduce((a, b) => a + b, 0) || 1;
+    return { post: e.map((v) => v / s), lp };
+  }
+
+  function buildFrames(pts, q, smooth, uni) {
+    const present = [...new Set(pts.map((p) => p.label))];
+    if (pts.length < 2 || present.length < 2) return [{ phase: "idle", title: "Need points from at least two classes", text: "Load an example dataset or click to add points.", st: { upto: 0 } }];
+    const model = fit(pts, smooth, uni);
+    const frames = [];
+    frames.push({
+      phase: "prior", major: true, arch: ["data", "prior"], title: "Count the classes: the prior P(y)",
+      text: `Before looking at any feature, the best guess is the class frequency. ${model.map((k, c) => (k ? `P(y=${c}) = ${k.n}/${pts.length} = <b>${k.prior.toFixed(2)}</b>` : "")).filter(Boolean).join(", ")}${uni ? " (uniform priors are on, so these are overridden to be equal)" : ""}.`,
+      tex: "P(y=c)=\\frac{N_c}{N}", st: { upto: 0, model },
+    });
+    model.forEach((k, c) => {
+      if (!k) return;
+      frames.push({
+        phase: "fit", arch: ["data", "lik"], title: `Fit class ${c}: one 1-D Gaussian per feature`,
+        text: `For class ${c}: x ~ N(<b>${k.mx.toFixed(2)}</b>, ${Math.sqrt(k.vx).toFixed(2)}²) and y ~ N(<b>${k.my.toFixed(2)}</b>, ${Math.sqrt(k.vy).toFixed(2)}²). Fitting is just a mean and a variance per feature per class, which is why Naive Bayes trains in a single pass.`,
+        tex: `\\mu_{${c}j}=\\tfrac{1}{N_{${c}}}\\textstyle\\sum_{i:y_i=${c}} x_{ij},\\quad \\sigma^2_{${c}j}=\\tfrac{1}{N_{${c}}}\\sum_{i:y_i=${c}}(x_{ij}-\\mu_{${c}j})^2`,
+        st: { upto: c + 1, model, focus: c },
+      });
+    });
+    frames.push({
+      phase: "indep", major: true, arch: ["lik"], title: "The naive step: multiply the per-feature likelihoods",
+      text: "Assuming features are independent given the class, the joint density is a product of the 1-D Gaussians. Geometrically each class becomes an <b>axis-aligned</b> ellipse: no tilt is possible. Load the anisotropic dataset to watch that assumption break.",
+      tex: "p(x\\mid y=c)=\\prod_{j=1}^{d}\\mathcal N\\!\\left(x_j;\\,\\mu_{cj},\\sigma^2_{cj}\\right)",
+      st: { upto: NC, model, ell: true },
+    });
+    frames.push({
+      phase: "post", major: true, arch: ["lik", "prior", "bayes", "out"], title: "Bayes' rule turns likelihoods into posteriors",
+      text: "Multiply each class's likelihood by its prior and normalise. Colour shows the winning class, saturation its posterior probability. Boundaries between Gaussians of unequal variance are curved (quadratic).",
+      tex: "P(y=c\\mid x)=\\frac{P(y=c)\\prod_j p(x_j\\mid c)}{\\sum_{c'}P(y=c')\\prod_j p(x_j\\mid c')}",
+      st: { upto: NC, model, ell: true, field: true },
+    });
+    const { post, lp } = posterior(model, q.x, q.y);
+    const win = post.indexOf(Math.max(...post));
+    frames.push({
+      phase: "query", major: true, arch: ["bayes", "out"], title: `Query ◆ → class ${win} with probability ${(post[win] * 100).toFixed(1)}%`,
+      text: `Working in log space avoids underflow: ${lp.map((v, c) => (isFinite(v) ? `log score(${c}) = <b>${v.toFixed(2)}</b>` : "")).filter(Boolean).join(", ")}. Softmax of these gives the posterior bars. Drag the ◆ to probe anywhere.`,
+      tex: "\\hat y=\\arg\\max_c\\Big[\\log P(c)+\\sum_j\\log\\mathcal N(x_j;\\mu_{cj},\\sigma^2_{cj})\\Big]",
+      st: { upto: NC, model, ell: true, field: true, query: true },
+    });
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">${[0, 1, 2].map((i) => `<span class="legend-item"><span class="swatch" style="background:${MLU.palette[i]}"></span>class ${i}</span>`).join("")}</div>
-            <div class="btn-row"><button id="nb-regen">regenerate data</button><button id="nb-clear">clear</button></div>
-          </div>
-          <svg id="nb-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">pick a class, click to add points · dashed ellipses = 1&sigma; of each class's fitted Gaussian</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>add points as</h3>
-            <div class="btn-row" id="nb-class-buttons">
-              ${[0, 1, 2].map((i) => `<button data-c="${i}" style="border-color:${MLU.palette[i]}">${i}</button>`).join("")}
-            </div>
-          </div>
-          <div class="control-card">
-            <h3>model</h3>
-            <div class="readout" id="nb-readout">–</div>
-            <div class="note">Gaussian Naive Bayes: each feature modeled with an independent per-class normal distribution; prediction = argmax of log-prior + log-likelihood.</div>
-          </div>
-        </div>
-      </div>
-    `;
+    const lab = Lab.studio(root, {
+      id: "nb", fps: 0.9, classes: NC,
+      legend: ui.legend([["var(--accent)", "query ◆"], ["var(--text)", "1σ / 2σ ellipse", "ring"]]),
+      tools: ui.btn("replay", "replay", true),
+      hint: "curves along the bottom and left edges are each class's per-feature Gaussians · drag the ◆ to query",
+      data: { kind: "class", presets: ["blobs3", "aniso", "overlap", "imbalanced", "moons", "circles"], def: "blobs3", n: 120, noise: 0.35 },
+      side: [{ title: "model", html: ui.range("sm", "variance smoothing (log₁₀)", -9, 0, 0.5, -9) + ui.check("uni", "uniform class priors", false) + ui.check("marg", "show marginal densities", true) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "data", label: "X, y", sub: "labelled data", x: 44, y: 95, w: 64, kind: "data" },
+          { id: "prior", label: "P(y)", sub: "class counts", x: 150, y: 38, kind: "param" },
+          { id: "lik", label: "∏ⱼ N(xⱼ|μ,σ²)", sub: "per-feature Gaussians", x: 150, y: 152, kind: "op", info: "One mean and variance per feature per class. The product is the 'naive' independence assumption." },
+          { id: "bayes", label: "Bayes' rule", sub: "prior × likelihood", x: 268, y: 95, kind: "op", tex: "P(c|x)\\propto P(c)\\,p(x|c)" },
+          { id: "out", label: "argmax", sub: "class", x: 346, y: 165, w: 60, kind: "out" },
+        ],
+        edges: [{ from: "data", to: "prior" }, { from: "data", to: "lik" }, { from: "prior", to: "bayes" }, { from: "lik", to: "bayes" }, { from: "bayes", to: "out" }],
+      },
+      phases: { prior: { label: "prior", color: 3 }, fit: { label: "fit Gaussians", color: 0 }, indep: { label: "independence", color: 4 }, post: { label: "posterior", color: 2 }, query: { label: "query", color: 2 } },
+      panels: [{ id: "post", title: "query posterior P(y | x)" }, { id: "params", title: "learned parameters" }],
+      onFrame: render, onData: () => replay(),
+    });
+    lab.editable({ onChange: () => replay({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const q = { x: 0.5, y: 0.5 };
+    const smooth = () => Math.pow(10, lab.val("sm"));
+    function replay({ at = "start" } = {}) { lab.load(buildFrames(lab.points, q, smooth(), lab.val("uni")), { at, play: at === "start" }); }
+    const postBars = Lab.bars(lab.R("panel-post"), { w: 360, h: 130, yd: [0, 1] });
+    const ellG = L.mid.append("g"), margG = L.mid.append("g");
+    const qG = L.top.append("g").attr("class", "no-add").style("cursor", "move");
+    qG.append("rect").attr("x", -8).attr("y", -8).attr("width", 16).attr("height", 16).attr("transform", "rotate(45)").attr("stroke", "var(--bg)").attr("stroke-width", 2);
+    qG.call(d3.drag().on("drag", (ev) => { q.x = Math.max(-10, Math.min(10, pl.x.invert(ev.x))); q.y = Math.max(-10, Math.min(10, pl.y.invert(ev.y))); lab.load(buildFrames(lab.points, q, smooth(), lab.val("uni")), { at: "end" }); }));
 
-    const svg = d3.select("#nb-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    let points = MLU.makeBlobs({ n: 60, clusters: 3 }).map((p) => ({ x: p.x, y: p.y, label: p.label }));
-    let currentClass = 0;
-    const bgG = svg.append("g");
-    const ellG = svg.append("g");
-    const ptsG = svg.append("g");
-
-    function render() {
-      const model = fitGaussianNB(points);
-      const cell = 14, cells = [];
-      for (let px = PAD; px < W - PAD; px += cell)
-        for (let py = PAD; py < H - PAD; py += cell) {
-          const xv = x.invert(px + cell / 2), yv = y.invert(py + cell / 2);
-          const { label } = predict(model, { x: xv, y: yv });
-          cells.push({ px, py, label });
-        }
-      const rects = bgG.selectAll("rect").data(cells);
-      rects.enter().append("rect").attr("width", cell).attr("height", cell)
-        .merge(rects).attr("x", (d) => d.px).attr("y", (d) => d.py)
-        .attr("fill", (d) => (d.label >= 0 ? MLU.palette[d.label] : "transparent")).attr("opacity", points.length ? 0.16 : 0);
-      rects.exit().remove();
-
-      const ellData = model.filter(Boolean).map((m, i) => m && { ...m, c: model.indexOf(m) });
-      const ell = ellG.selectAll("ellipse").data(model.map((m, i) => (m ? { ...m, c: i } : null)).filter(Boolean));
-      ell.enter().append("ellipse").attr("fill", "none").attr("stroke-width", 1.5).attr("stroke-dasharray", "4,3")
-        .merge(ell)
-        .attr("cx", (d) => x(d.mx)).attr("cy", (d) => y(d.my))
-        .attr("rx", (d) => Math.abs(x(d.mx + d.sx) - x(d.mx))).attr("ry", (d) => Math.abs(y(d.my - d.sy) - y(d.my)))
-        .attr("stroke", (d) => MLU.palette[d.c]);
-      ell.exit().remove();
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle")
-        .attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y)).attr("fill", (d) => MLU.palette[d.label])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-
-      document.getElementById("nb-readout").innerHTML = model.map((m, i) => m
-        ? `class ${i}: &mu;=(${m.mx.toFixed(1)}, ${m.my.toFixed(1)}) &sigma;=(${m.sx.toFixed(1)}, ${m.sy.toFixed(1)}) prior=${m.prior.toFixed(2)}`
-        : `class ${i}: no data`).join("<br>");
+    function render(f) {
+      const st = f.st, model = st.model;
+      if (st.field && model) Lab.field(L.bg, pl, (x, y) => { const p = posterior(model, x, y).post; const k = p.indexOf(Math.max(...p)); return k + p[k] * 0.999; }, (v) => Lab.classColor(Math.floor(v), ((v % 1) - 0.34) * 1.5, 0.42), { res: 90 });
+      else L.bg.selectAll("*").remove();
+      ellG.selectAll("*").remove(); margG.selectAll("*").remove();
+      if (model) {
+        model.forEach((k, c) => {
+          if (!k || c >= st.upto) return;
+          const dim = st.focus != null && st.focus !== c;
+          if (st.ell || st.focus === c) for (const s of [1, 2]) ellG.append("path").attr("d", Lab.ellipsePath(pl, [k.mx, k.my], [[k.vx, 0], [0, k.vy]], s)).attr("fill", s === 1 ? col(c) : "none").attr("fill-opacity", 0.08).attr("stroke", col(c)).attr("stroke-width", s === 1 ? 2 : 1.2).attr("stroke-dasharray", s === 2 ? "5 4" : null).attr("opacity", dim ? 0.35 : 1);
+          if (lab.val("marg")) {
+            const H = 70, Wd = 70;
+            const PX = Math.max(...model.filter(Boolean).map((m) => gauss(m.mx, m.mx, m.vx)));
+            const PY = Math.max(...model.filter(Boolean).map((m) => gauss(m.my, m.my, m.vy)));
+            const scx = H / PX, scy = Wd / PY;
+            const xs = d3.range(-10, 10.01, 0.1);
+            margG.append("path").attr("d", d3.line().x((x) => pl.x(x)).y((x) => pl.y(-10) - Math.min(H, gauss(x, k.mx, k.vx) * scx))(xs))
+              .attr("fill", col(c)).attr("fill-opacity", 0.14).attr("stroke", col(c)).attr("stroke-width", 1.8).attr("opacity", dim ? 0.3 : 1);
+            margG.append("path").attr("d", d3.line().y((y) => pl.y(y)).x((y) => pl.x(-10) + Math.min(Wd, gauss(y, k.my, k.vy) * scy))(xs))
+              .attr("fill", col(c)).attr("fill-opacity", 0.14).attr("stroke", col(c)).attr("stroke-width", 1.8).attr("opacity", dim ? 0.3 : 1);
+          }
+        });
+      }
+      lab.drawPoints({ color: (d) => col(d.label), opacity: (d) => (st.focus != null && d.label !== st.focus ? 0.25 : 1) });
+      qG.style("display", st.query ? null : "none").attr("transform", `translate(${pl.x(q.x)},${pl.y(q.y)})`);
+      if (model && st.query) {
+        const { post } = posterior(model, q.x, q.y);
+        qG.select("rect").attr("fill", col(post.indexOf(Math.max(...post))));
+        postBars.set(post.map((p, c) => ({ label: "class " + c, value: p, color: col(c), text: (p * 100).toFixed(1) + "%" })));
+      } else postBars.set([0, 1, 2].map((c) => ({ label: "class " + c, value: 0, color: col(c), text: "–" })));
+      lab.R("panel-params").innerHTML = model ? `<table class="mini-table"><tr><th>class</th><th>prior</th><th>μₓ</th><th>σₓ</th><th>μᵧ</th><th>σᵧ</th></tr>${model.map((k, c) => (k ? `<tr class="${st.focus === c ? "on" : ""}"><td><span class="swatch" style="background:${col(c)}"></span> ${c}</td><td>${c < st.upto || f.phase === "prior" ? k.prior.toFixed(2) : "·"}</td><td>${c < st.upto ? fmt(k.mx, 2) : "·"}</td><td>${c < st.upto ? fmt(Math.sqrt(k.vx), 2) : "·"}</td><td>${c < st.upto ? fmt(k.my, 2) : "·"}</td><td>${c < st.upto ? fmt(Math.sqrt(k.vy), 2) : "·"}</td></tr>` : "")).join("")}</table><div class="lab-card-note">Only 2 × d + 1 numbers per class. That tiny parameter count is why Naive Bayes needs so little data.</div>` : "";
+      let acc = null;
+      if (model) acc = lab.points.filter((p) => { const po = posterior(model, p.x, p.y).post; return po.indexOf(Math.max(...po)) === p.label; }).length / lab.points.length;
+      lab.readout(`<div class="kv"><span>points</span><b>${lab.points.length}</b><span>train accuracy</span><b>${acc == null ? "–" : (acc * 100).toFixed(1) + "%"}</b><span>parameters</span><b>${model ? model.filter(Boolean).length * 5 : "–"}</b></div>`);
     }
-
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), label: currentClass });
-      render();
-    });
-    document.getElementById("nb-class-buttons").addEventListener("click", (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
-      currentClass = +btn.dataset.c;
-      document.querySelectorAll("#nb-class-buttons button").forEach((b) => b.classList.toggle("primary", +b.dataset.c === currentClass));
-    });
-    document.querySelector("#nb-class-buttons button").classList.add("primary");
-    document.getElementById("nb-regen").addEventListener("click", () => {
-      points = MLU.makeBlobs({ n: 60, clusters: 3 }).map((p) => ({ x: p.x, y: p.y, label: p.label }));
-      render();
-    });
-    document.getElementById("nb-clear").addEventListener("click", () => { points = []; render(); });
-
-    render();
-    return () => {};
+    lab.watch(["sm", "uni"], () => replay({ at: "end" }), { format: { sm: (v) => "1e" + v } });
+    lab.watch(["marg"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="replay"]').onclick = () => replay();
+    lab.loadPreset("blobs3");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "naive-bayes",
     name: "Gaussian Naive Bayes",
     category: "Supervised - Classification",
-    tagline: "independent per-class gaussians",
-    description: "Fits an independent 1D normal distribution per feature per class, then classifies by the highest log-prior + log-likelihood. Ellipses show each class's fitted 1σ Gaussian.",
+    tagline: "per-class Gaussians + Bayes' rule",
+    description: "Fit one Gaussian per feature per class, multiply them under the naive independence assumption, and apply Bayes' rule. Watch priors, marginal densities, axis-aligned ellipses and the posterior field build up, then drag a query to read its posterior.",
     info: {
       type: "Supervised - Classification. Generative probabilistic model (Gaussian Naive Bayes).",
       scenario: "A fast, simple baseline classifier, especially effective with high-dimensional or sparse features (text), or whenever a cheap probabilistic model is preferable to an iteratively-trained one.",

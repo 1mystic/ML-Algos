@@ -1,144 +1,103 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
+  const { ui, col, fmt } = Lab;
 
-  // Regularized, 2nd-order (Newton) regression tree: splits are scored with the
-  // XGBoost gain formula and leaves use the closed-form regularized weight −G/(H+λ).
-  function buildXGBTree(points, depth, maxDepth, lambda, gamma) {
-    const G = points.reduce((s, p) => s + p.g, 0);
-    const H = points.reduce((s, p) => s + p.h, 0);
-    const leafValue = -G / (H + lambda);
-    if (depth >= maxDepth || points.length < 4) return { leaf: true, value: leafValue };
-    const xs = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b);
-    let best = null;
-    for (let i = 0; i < xs.length - 1; i++) {
-      const thr = (xs[i] + xs[i + 1]) / 2;
-      const left = points.filter((p) => p.x <= thr), right = points.filter((p) => p.x > thr);
-      if (!left.length || !right.length) continue;
-      const GL = left.reduce((s, p) => s + p.g, 0), HL = left.reduce((s, p) => s + p.h, 0);
-      const GR = right.reduce((s, p) => s + p.g, 0), HR = right.reduce((s, p) => s + p.h, 0);
-      const gain = 0.5 * ((GL * GL) / (HL + lambda) + (GR * GR) / (HR + lambda) - (G * G) / (H + lambda)) - gamma;
-      if (!best || gain > best.gain) best = { gain, thr, left, right };
+  function buildFrames(pts, P) {
+    const n = pts.length;
+    if (!pts.some((p) => p.label === 0) || !pts.some((p) => p.label === 1)) return [{ phase: "idle", title: "Need both classes", text: "", st: { trees: [], F: [] } }];
+    const base = Math.log((pts.filter((p) => p.label).length + 0.5) / (pts.filter((p) => !p.label).length + 0.5));
+    const F = new Array(n).fill(base);
+    const trees = [];
+    const ones = new Array(n).fill(1);
+    const frames = [{ phase: "init", major: true, arch: ["F"], title: `Base score: log-odds of the class balance (${base.toFixed(2)})`, text: "XGBoost starts from a constant prediction and adds trees one at a time, each trained on second-order information about the loss.", tex: "F_0=\\log\\frac{\\#\\{y=1\\}}{\\#\\{y=0\\}}", st: { trees: [], F: F.slice() }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } }];
+    for (let t = 1; t <= P.rounds; t++) {
+      const { g, h } = GBDT.gradHess(pts, F);
+      const detail = t <= 3;
+      if (detail) frames.push({ phase: "grad", arch: ["F", "gh"], title: `Round ${t}: gradient and Hessian for every point`, text: "For log-loss, g = p − y (how wrong, with sign) and h = p(1 − p) (how sure the model is). Dot size shows |g|: confidently wrong points shout loudest. Unlike plain gradient boosting, h lets each leaf take a Newton step instead of a fixed-size one.", tex: "g_i=\\frac{\\partial \\ell}{\\partial F}=p_i-y_i,\\qquad h_i=\\frac{\\partial^2 \\ell}{\\partial F^2}=p_i(1-p_i)", st: { trees: trees.slice(), F: F.slice(), g }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } });
+      const tree = GBDT.growDepthwise(pts, pts.map((_, i) => i), g, h, ones, { maxDepth: P.depth, lam: P.lam, gamma: P.gamma, minH: P.minH });
+      if (detail) frames.push({ phase: "tree", arch: ["gh", "gain", "prune", "leaf"], title: `Round ${t}: grow a tree by structure score, prune with γ`, text: `Each split is chosen by the regularised gain below, computed purely from sums of g and h in each child. ${tree.pruned.length ? `<b>${tree.pruned.length}</b> split${tree.pruned.length > 1 ? "s were" : " was"} pruned because the gain did not beat γ = ${P.gamma}.` : "No split was pruned at this γ."} Leaf values (numbers on the map) are the optimal weights.`, tex: "\\text{Gain}=\\tfrac12\\Big[\\tfrac{G_L^2}{H_L+\\lambda}+\\tfrac{G_R^2}{H_R+\\lambda}-\\tfrac{(G_L+G_R)^2}{H_L+H_R+\\lambda}\\Big]-\\gamma,\\qquad w^\\star=-\\frac{G}{H+\\lambda}", st: { trees: trees.slice(), F: F.slice(), g, tree }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } });
+      for (let i = 0; i < n; i++) F[i] += P.eta * GBDT.leafFor(tree.nodes, pts[i]).w;
+      trees.push(tree.nodes);
+      frames.push({ phase: "add", major: t === 1, arch: ["leaf", "eta", "F"], title: `Round ${t}: F ← F + η·f${t}`, text: `Log-loss <b>${GBDT.logloss(pts, F).toFixed(4)}</b>, accuracy <b>${(GBDT.accuracy(pts, F) * 100).toFixed(1)}%</b>. The tree has ${tree.nodes.filter((nd) => nd.leaf && !(nd.parent != null && tree.nodes[nd.parent].leaf)).length} leaves.`, tex: "F_t(x)=F_{t-1}(x)+\\eta\\,f_t(x)", st: { trees: trees.slice(), F: F.slice(), tree }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } });
     }
-    if (!best || best.gain <= 0) return { leaf: true, value: leafValue }; // gain-based pruning
-    return {
-      leaf: false, thr: best.thr, gain: best.gain,
-      left: buildXGBTree(best.left, depth + 1, maxDepth, lambda, gamma),
-      right: buildXGBTree(best.right, depth + 1, maxDepth, lambda, gamma),
-    };
+    frames.push({ ...frames[frames.length - 1], phase: "done", major: true, arch: ["F", "out"], title: `${P.rounds} rounds complete`, text: "Regularisation lives in three places: λ shrinks leaf weights, γ demands a minimum gain per split, and η shrinks every tree. Raise γ and watch trees get smaller; raise λ and watch the probability field soften." });
+    return frames;
   }
-  function predictTree(node, x) { return node.leaf ? node.value : predictTree(x <= node.thr ? node.left : node.right, x); }
-
-  function targetFn(xv) { return 2.4 * Math.sin(xv * 0.7) + 0.15 * xv; }
+  function predictF(trees, eta, base, p) { return base + trees.reduce((s, nodes) => s + eta * GBDT.leafFor(nodes, p).w, 0); }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">trees in ensemble: <b id="xgb-count">0</b></span></div>
-            <div class="btn-row">
-              <button id="xgb-step" class="primary">+ 1 tree</button>
-              <button id="xgb-step10">+ 10 trees</button>
-              <button id="xgb-reset">reset ensemble</button>
-              <button id="xgb-regen">regenerate data</button>
-            </div>
-          </div>
-          <svg id="xgb-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">each round: compute gradient g / hessian h per point, grow one gain-regularized tree, shrink it in</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>hyperparameters</h3>
-            <div class="field"><label>tree depth <span class="val" id="xgb-depth-val">2</span></label>
-              <input type="range" id="xgb-depth" min="1" max="4" step="1" value="2" /></div>
-            <div class="field"><label>learning rate &eta; <span class="val" id="xgb-lr-val">0.30</span></label>
-              <input type="range" id="xgb-lr" min="5" max="100" step="5" value="30" /></div>
-            <div class="field"><label>&lambda; (L2 leaf reg.) <span class="val" id="xgb-lambda-val">1.0</span></label>
-              <input type="range" id="xgb-lambda" min="0" max="100" step="1" value="10" /></div>
-            <div class="field"><label>&gamma; (min. split gain) <span class="val" id="xgb-gamma-val">0.0</span></label>
-              <input type="range" id="xgb-gamma" min="0" max="100" step="1" value="0" /></div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="xgb-readout">–</div>
-            <div class="note">Unlike plain gradient boosting, each split is only kept if its Gain exceeds &gamma; (a real prune step), and every leaf's value is shrunk toward 0 by &lambda; - try raising &gamma; and watch shallow, low-gain splits stop happening.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#xgb-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    function genData() {
-      const pts = [];
-      for (let i = 0; i < 45; i++) { const xv = MLU.randRange(...DOMAIN); pts.push({ x: xv, y: targetFn(xv) + MLU.randn() * 0.6 }); }
-      return pts;
+    const lab = Lab.studio(root, {
+      id: "xgb", fps: 3, classes: 2,
+      legend: ui.legend([["var(--text)", "p = 0.5", "line"], ["var(--text-faint)", "current tree's leaves", "ring"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      hint: "dot size ∝ |gradient| on gradient frames · click adds the selected class · drag / double-click to edit",
+      data: { kind: "class", presets: ["moons", "circles", "xor", "spiral", "overlap", "linear"], def: "moons", n: 120, noise: 0.25 },
+      side: [{ title: "booster", html: ui.range("R", "rounds", 1, 60, 1, 20) + ui.range("eta", "learning rate η", 0.05, 1, 0.05, 0.3) + ui.range("depth", "max_depth", 1, 6, 1, 3) + ui.range("lam", "λ (L2 on leaf weights)", 0, 10, 0.5, 1) + ui.range("gamma", "γ (min split gain)", 0, 5, 0.25, 0) + ui.range("minH", "min_child_weight (Σh)", 0, 5, 0.25, 1) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "F", label: "F(x)", sub: "current score", x: 48, y: 40, w: 62, kind: "op" },
+          { id: "gh", label: "gᵢ, hᵢ", sub: "1st & 2nd order", x: 140, y: 40, kind: "loss", tex: "g=p-y,\\;h=p(1-p)" },
+          { id: "gain", label: "split gain", sub: "G²/(H+λ) − γ", x: 258, y: 40, kind: "op" },
+          { id: "prune", label: "prune", sub: "gain < 0", x: 340, y: 110, w: 64, kind: "param" },
+          { id: "leaf", label: "w* = −G/(H+λ)", sub: "leaf weights", x: 214, y: 110, kind: "op" },
+          { id: "eta", label: "× η", sub: "shrink", x: 92, y: 110, w: 56, kind: "param" },
+          { id: "out", label: "σ(F)", sub: "probability", x: 214, y: 168, kind: "out" },
+        ],
+        edges: [{ from: "F", to: "gh" }, { from: "gh", to: "gain" }, { from: "gain", to: "prune" }, { from: "prune", to: "leaf" }, { from: "leaf", to: "eta" }, { from: "eta", to: "F", dash: true, label: "add tree" }, { from: "F", to: "out", bend: -30 }],
+      },
+      phases: { init: { label: "init", color: 3 }, grad: { label: "g, h", color: 1 }, tree: { label: "grow tree", color: 4 }, add: { label: "add tree", color: 0 }, done: { label: "done", color: 2 } },
+      panels: [{ id: "splits", title: "current tree's splits" }],
+      charts: [{ id: "loss", title: "training log-loss & accuracy", series: [{ key: "loss", label: "log-loss", color: "var(--series-1)" }, { key: "acc", label: "accuracy", color: "var(--series-3)", dash: "4 3" }] }],
+      onFrame: render, onData: () => retrain(),
+    });
+    lab.editable({ onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const P = () => ({ rounds: lab.val("R"), eta: lab.val("eta"), depth: lab.val("depth"), lam: lab.val("lam"), gamma: lab.val("gamma"), minH: lab.val("minH") });
+    let base = 0;
+    function retrain({ at = "start" } = {}) {
+      const pts = lab.points;
+      base = Math.log((pts.filter((p) => p.label).length + 0.5) / (pts.filter((p) => !p.label).length + 0.5));
+      lab.load(buildFrames(pts, P()), { at, play: at === "start" });
     }
-    let points = genData();
-    let trees = [], F0 = 0;
-
-    function depth() { return +document.getElementById("xgb-depth").value; }
-    function lr() { return +document.getElementById("xgb-lr").value / 100; }
-    function lambda() { return +document.getElementById("xgb-lambda").value / 10; }
-    function gamma() { return +document.getElementById("xgb-gamma").value / 20; }
-
-    function predict(xv) { return F0 + trees.reduce((s, t) => s + lr() * predictTree(t, xv), 0); }
-
-    const path = svg.append("path").attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2.2);
-    const ptsG = svg.append("g");
-
-    function render() {
-      document.getElementById("xgb-count").textContent = trees.length;
-      document.getElementById("xgb-depth-val").textContent = depth();
-      document.getElementById("xgb-lr-val").textContent = lr().toFixed(2);
-      document.getElementById("xgb-lambda-val").textContent = lambda().toFixed(1);
-      document.getElementById("xgb-gamma-val").textContent = gamma().toFixed(2);
-
-      const steps = 160;
-      const line = d3.line().x((d) => x(d[0])).y((d) => y(d[1]));
-      const curve = Array.from({ length: steps + 1 }, (_, i) => {
-        const xv = DOMAIN[0] + (i / steps) * (DOMAIN[1] - DOMAIN[0]);
-        return [xv, predict(xv)];
-      });
-      path.attr("d", line(curve));
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 4.5).attr("fill", MLU.palette[0]).attr("stroke", "var(--bg)").attr("stroke-width", 1)
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y));
-      sel.exit().remove();
-
-      const mse = points.length ? MLU.mean(points.map((p) => (p.y - predict(p.x)) ** 2)) : 0;
-      document.getElementById("xgb-readout").innerHTML =
-        `points: <b>${points.length}</b><br>trees: <b>${trees.length}</b><br>train MSE: <b class="num">${mse.toFixed(3)}</b>`;
+    const leafG = L.mid.append("g");
+    function render(f) {
+      const st = f.st, p = P();
+      if (!st.F.length) { L.bg.selectAll("*").remove(); lab.drawPoints({}); return; }
+      const grid = Lab.sampleGrid(pl, (x, y) => GBDT.sigmoid(predictF(st.trees, p.eta, base, { x, y })), 110);
+      Lab.paintGrid(L.bg, pl, grid, (v) => Lab.probColor(v, 0.5), { smooth: false });
+      Lab.contour(L.under, pl, grid, [0.5], { cls: "iso-main", width: 2 });
+      leafG.selectAll("*").remove();
+      const tr = st.tree;
+      if (tr) {
+        for (const nd of tr.nodes) {
+          if (!nd.leaf || (nd.parent != null && tr.nodes[nd.parent].leaf)) continue;
+          const [x0, x1, y0, y1] = nd.bounds;
+          leafG.append("rect").attr("x", pl.x(x0)).attr("y", pl.y(y1)).attr("width", pl.x(x1) - pl.x(x0)).attr("height", pl.y(y0) - pl.y(y1)).attr("fill", "none").attr("stroke", "var(--text)").attr("stroke-opacity", 0.5).attr("stroke-dasharray", "3 3");
+          leafG.append("text").attr("class", "lbl-strong halo").attr("x", pl.x((x0 + x1) / 2)).attr("y", pl.y((y0 + y1) / 2)).attr("text-anchor", "middle").text((nd.w >= 0 ? "+" : "") + nd.w.toFixed(2));
+        }
+      }
+      const gmax = st.g ? Math.max(...st.g.map(Math.abs), 1e-6) : 1;
+      lab.drawPoints({ color: (d) => col(d.label), r: (d, i) => (st.g ? 2 + 7 * Math.abs(st.g[i]) / gmax : 4.4) });
+      const el = lab.R("panel-splits");
+      if (tr) {
+        const rows = tr.nodes.filter((nd) => !nd.leaf || nd.pruned).map((nd) => `<tr class="${nd.pruned ? "bad" : "ok"}"><td>${nd.depth}</td><td>${nd.f} ≤ ${nd.thr.toFixed(2)}</td><td>${nd.gain.toFixed(3)}</td><td>${nd.pruned ? "pruned" : "kept"}</td></tr>`);
+        el.innerHTML = `<table class="mini-table"><tr><th>depth</th><th>split</th><th>gain − γ</th><th></th></tr>${rows.join("") || `<tr><td colspan="4">no split beat γ: this tree is a single leaf</td></tr>`}</table>`;
+      } else el.innerHTML = `<div class="lab-card-note">Step to a “grow tree” or “add tree” frame to inspect its splits.</div>`;
+      const n = f.m ? f.m : {};
+      lab.readout(`<div class="kv"><span>trees</span><b>${st.trees.length}</b><span>log-loss</span><b>${fmt(n.loss)}</b><span>accuracy</span><b>${n.acc != null ? (n.acc * 100).toFixed(1) + "%" : "–"}</b></div>`);
     }
-
-    function boost() {
-      // squared-error loss ⇒ gradient g = ŷ−y, hessian h = 1 per point
-      const withGrad = points.map((p) => { const pred = predict(p.x); return { x: p.x, g: pred - p.y, h: 1 }; });
-      trees.push(buildXGBTree(withGrad, 0, depth(), lambda(), gamma()));
-    }
-
-    document.getElementById("xgb-step").addEventListener("click", () => { boost(); render(); });
-    document.getElementById("xgb-step10").addEventListener("click", () => { for (let i = 0; i < 10; i++) boost(); render(); });
-    document.getElementById("xgb-reset").addEventListener("click", () => { trees = []; F0 = points.length ? MLU.mean(points.map((p) => p.y)) : 0; render(); });
-    document.getElementById("xgb-regen").addEventListener("click", () => { points = genData(); trees = []; F0 = MLU.mean(points.map((p) => p.y)); render(); });
-    ["xgb-depth", "xgb-lr", "xgb-lambda", "xgb-gamma"].forEach((id) => document.getElementById(id).addEventListener("input", render));
-
-    F0 = MLU.mean(points.map((p) => p.y));
-    render();
-    return () => {};
+    lab.watch(["R", "eta", "depth", "lam", "gamma", "minH"], () => retrain());
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("moons");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "xgboost",
     name: "XGBoost",
     category: "Supervised - Trees & Ensembles",
-    tagline: "regularized, 2nd-order boosting",
-    description: "Gradient boosting with a Newton (2nd-order, gradient+hessian) approximation to the loss, an explicit per-leaf L2 penalty, and a minimum-gain threshold that prunes low-value splits automatically.",
+    tagline: "Newton steps, gain, γ-pruning",
+    description: "Second-order boosting on log-loss: see each point's gradient and Hessian, the regularised split gain that picks every cut, γ pruning splits away, and optimal leaf weights −G/(H+λ) painted onto the map.",
     info: {
       type: "Supervised - Regression/Classification. Regularized, second-order (Newton) gradient-boosted tree ensemble.",
       scenario: "Top predictive accuracy on tabular data with finer control over overfitting than plain gradient boosting - historically the dominant tabular-competition baseline.",

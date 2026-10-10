@@ -1,179 +1,160 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-  const TWO_PI = 2 * Math.PI;
+  const { ui, col, fmt } = Lab;
+  function logN(x, mu, S) {
+    const d = MLU.det2x2(S), inv = MLU.inverse2x2(S);
+    const a = x[0] - mu[0], b = x[1] - mu[1];
+    return -0.5 * (a * (inv[0][0] * a + inv[0][1] * b) + b * (inv[1][0] * a + inv[1][1] * b)) - Math.log(2 * Math.PI) - 0.5 * Math.log(Math.max(d, 1e-12));
+  }
+  const lse = (a) => { const m = Math.max(...a); return m + Math.log(a.reduce((s, v) => s + Math.exp(v - m), 0)); };
+  function constrain(S, type) {
+    if (type === "diag") return [[S[0][0], 0], [0, S[1][1]]];
+    if (type === "spherical") { const v = (S[0][0] + S[1][1]) / 2; return [[v, 0], [0, v]]; }
+    return S;
+  }
+  function estep(X, comp) {
+    let ll = 0;
+    const R = X.map((x) => {
+      const l = comp.map((c) => Math.log(c.pi + 1e-12) + logN(x, c.mu, c.S));
+      const z = lse(l); ll += z;
+      return l.map((v) => Math.exp(v - z));
+    });
+    return { R, ll };
+  }
+  function mstep(X, R, k, type) {
+    const n = X.length;
+    return Array.from({ length: k }, (_, j) => {
+      const Nk = R.reduce((s, r) => s + r[j], 0) + 1e-9;
+      const mu = [0, 0];
+      X.forEach((x, i) => { mu[0] += (R[i][j] * x[0]) / Nk; mu[1] += (R[i][j] * x[1]) / Nk; });
+      const S = [[0, 0], [0, 0]];
+      X.forEach((x, i) => { const a = x[0] - mu[0], b = x[1] - mu[1]; S[0][0] += (R[i][j] * a * a) / Nk; S[0][1] += (R[i][j] * a * b) / Nk; S[1][1] += (R[i][j] * b * b) / Nk; });
+      S[1][0] = S[0][1]; S[0][0] += 1e-3; S[1][1] += 1e-3;
+      return { pi: Nk / n, mu, S: constrain(S, type) };
+    });
+  }
+  function initComp(X, k) {
+    const idx = MLU.shuffle([...X.keys()]).slice(0, k);
+    const v = MLU.covMatrix(X, MLU.meanVec(X));
+    const s = (v[0][0] + v[1][1]) / 2 / Math.max(1, k);
+    return idx.map((i) => ({ pi: 1 / k, mu: X[i].slice(), S: [[s, 0], [0, s]] }));
+  }
+  function nParams(k, type) { const cov = type === "full" ? 3 : type === "diag" ? 2 : 1; return k * (2 + cov) + (k - 1); }
+  function fitQuick(X, k, type) {
+    let comp = initComp(X, k), ll = -Infinity;
+    for (let it = 0; it < 80; it++) { const e = estep(X, comp); comp = mstep(X, e.R, k, type); if (Math.abs(e.ll - ll) < 1e-4) { ll = e.ll; break; } ll = e.ll; }
+    return { comp, ll: estep(X, comp).ll };
+  }
 
-  function gaussPdf(p, mu, cov) {
-    const dx = p.x - mu.x, dy = p.y - mu.y;
-    const det = Math.max(MLU.det2x2(cov), 1e-6);
-    const inv = MLU.inverse2x2(cov);
-    const m = dx * (inv[0][0] * dx + inv[0][1] * dy) + dy * (inv[1][0] * dx + inv[1][1] * dy);
-    return Math.exp(-0.5 * m) / (TWO_PI * Math.sqrt(det));
+  function buildFrames(pts, k, type, iters) {
+    const X = pts.map((p) => [p.x, p.y]);
+    if (X.length < k + 1) return [{ phase: "idle", title: "Need more points", text: "", st: { comp: [], R: null } }];
+    let comp = initComp(X, k);
+    const frames = [{ phase: "init", major: true, arch: ["init"], title: `Initialise ${k} Gaussians`, text: "Means start on random data points, covariances as broad circles, mixing weights equal. Like k-means, EM only finds a local optimum, so initialisation matters.", tex: "p(x)=\\sum_{j=1}^{k}\\pi_j\\,\\mathcal N(x\\mid\\mu_j,\\Sigma_j)", st: { comp: JSON.parse(JSON.stringify(comp)), R: null }, m: {} }];
+    let prev = -Infinity;
+    for (let it = 1; it <= iters; it++) {
+      const { R, ll } = estep(X, comp);
+      frames.push({ phase: "e", major: it === 1, arch: ["e", "ll"], title: `Iteration ${it} · E-step: soft responsibilities`, text: `Each point is shared among the components in proportion to how well each explains it. Colours are blended by responsibility, so points between clusters look mixed. Log-likelihood <b>${ll.toFixed(2)}</b>.`, tex: "\\gamma_{ij}=\\frac{\\pi_j\\,\\mathcal N(x_i\\mid\\mu_j,\\Sigma_j)}{\\sum_l \\pi_l\\,\\mathcal N(x_i\\mid\\mu_l,\\Sigma_l)}", st: { comp: JSON.parse(JSON.stringify(comp)), R }, m: { ll: ll / X.length } });
+      const old = comp;
+      comp = mstep(X, R, k, type);
+      frames.push({ phase: "m", arch: ["m"], title: `Iteration ${it} · M-step: re-fit each Gaussian`, text: `Weighted means, covariances and mixing weights, using the responsibilities as soft counts. Mixing weights: ${comp.map((c) => c.pi.toFixed(2)).join(", ")}.`, tex: "N_j=\\sum_i\\gamma_{ij},\\quad \\mu_j=\\frac{1}{N_j}\\sum_i\\gamma_{ij}x_i,\\quad \\Sigma_j=\\frac1{N_j}\\sum_i\\gamma_{ij}(x_i-\\mu_j)(x_i-\\mu_j)^\\top,\\quad \\pi_j=\\frac{N_j}{n}", st: { comp: JSON.parse(JSON.stringify(comp)), prev: old, R }, m: { ll: ll / X.length } });
+      if (Math.abs(ll - prev) < 1e-3) {
+        frames.push({ phase: "done", major: true, arch: ["ll", "out"], title: `Converged after ${it} iterations`, text: `The log-likelihood stopped improving (it never decreases under EM). Each point gets a probability of belonging to every cluster, and clusters can be elliptical, tilted and of different sizes, which k-means cannot do.`, st: { comp: JSON.parse(JSON.stringify(comp)), R }, m: { ll: ll / X.length } });
+        break;
+      }
+      prev = ll;
+    }
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint" style="font-size:11.5px">EM iteration <b id="gm-iter">0</b></span></div>
-            <div class="btn-row">
-              <button id="gm-step" class="primary">step (E+M)</button>
-              <button id="gm-run">run to convergence</button>
-              <button id="gm-reset">reset components</button>
-              <button id="gm-regen">regenerate data</button>
-            </div>
-          </div>
-          <svg id="gm-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">points are colored by their most-likely component · ellipses = 1&sigma; contour of each Gaussian</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>components k = <span class="val" id="gm-k-val">3</span></h3>
-            <input type="range" id="gm-k" min="1" max="6" step="1" value="3" />
-          </div>
-          <div class="control-card">
-            <h3>state</h3>
-            <div class="readout" id="gm-readout">–</div>
-            <div class="note">Expectation-Maximization: E-step computes soft responsibilities under each Gaussian, M-step re-estimates each component's mean/covariance/weight from those responsibilities.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#gm-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    let points = MLU.makeBlobs({ n: 80, clusters: 3, spread: 1.1 }).map((p) => ({ x: p.x, y: p.y, c: 0 }));
-    let comps = [];
-    let iter = 0, loglik = 0;
-
-    function k() { return +document.getElementById("gm-k").value; }
-    function initComps() {
-      const shuffled = MLU.shuffle(points);
-      comps = Array.from({ length: k() }, (_, i) => ({
-        mu: shuffled.length ? { x: shuffled[i % shuffled.length].x, y: shuffled[i % shuffled.length].y } : { x: MLU.randRange(...DOMAIN), y: MLU.randRange(...DOMAIN) },
-        cov: [[4, 0], [0, 4]],
-        weight: 1 / k(),
-      }));
-      iter = 0;
+    const lab = Lab.studio(root, {
+      id: "gmm", fps: 2.5,
+      legend: ui.legend([["var(--text)", "1σ / 2σ ellipses", "ring"], ["var(--text)", "mean", "ring"]]),
+      tools: ui.btn("rerun", "rerun (new init)", true) + ui.btn("bic", "BIC scan", false, "fit k = 1…7 and compare BIC"),
+      hint: "point colour is a blend of responsibilities · click to add points · drag / double-click to edit",
+      data: { kind: "cluster", presets: ["aniso", "blobs3", "varied", "blobs4", "moons", "outliers"], def: "aniso", n: 150, noise: 0.3 },
+      side: [{ title: "model", html: ui.range("k", "components k", 1, 7, 1, 3) + ui.select("cov", "covariance type", [["full", "full (tilted ellipses)"], ["diag", "diagonal (axis-aligned)"], ["spherical", "spherical (circles)"]], "full") + ui.range("it", "max EM iterations", 5, 100, 5, 40) + ui.check("dens", "show density contours", true) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "init", label: "init π, μ, Σ", sub: "random means", x: 56, y: 44, kind: "param" },
+          { id: "e", label: "E-step", sub: "responsibilities γ", x: 184, y: 44, kind: "op", tex: "\\gamma_{ij}\\propto\\pi_j\\mathcal N(x_i|\\mu_j,\\Sigma_j)" },
+          { id: "m", label: "M-step", sub: "weighted MLE", x: 184, y: 140, kind: "op" },
+          { id: "ll", label: "log p(X)", sub: "never decreases", x: 316, y: 44, kind: "loss", tex: "\\sum_i\\log\\sum_j\\pi_j\\mathcal N(x_i|\\mu_j,\\Sigma_j)" },
+          { id: "out", label: "soft labels", sub: "P(cluster | x)", x: 316, y: 140, kind: "out" },
+        ],
+        edges: [{ from: "init", to: "e" }, { from: "e", to: "m" }, { from: "m", to: "e", bend: -30, dash: true, label: "repeat" }, { from: "e", to: "ll" }, { from: "ll", to: "out", label: "converged" }],
+      },
+      phases: { init: { label: "init", color: 3 }, e: { label: "E-step", color: 0 }, m: { label: "M-step", color: 2 }, done: { label: "converged", color: 2 } },
+      panels: [{ id: "resp", title: "responsibilities of a sample point", sub: "hover a point" }],
+      charts: [{ id: "ll", title: "log-likelihood per point", series: [{ key: "ll", label: "ℓ / n", color: "var(--series-1)" }] }, { id: "bic", title: "model selection: BIC vs k (lower is better)", custom: true }],
+      onFrame: render, onData: () => { bic = null; drawBic(); rerun(); },
+    });
+    lab.editable({ newPoint: (x, y) => ({ x, y, label: 0 }), onChange: () => rerun({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    let seed = 4, bic = null, hover = 0, noAnim = false;
+    function rerun({ at = "start" } = {}) { MLU.seedRng(seed); lab.load(buildFrames(lab.points, lab.val("k"), lab.val("cov"), lab.val("it")), { at, play: at === "start" }); }
+    function drawBic() {
+      const el = lab.charts.bic.el; el.innerHTML = "";
+      const P = Lab.xy(el, { w: 360, h: 130, xd: [1, 7], yd: bic ? [Math.min(...bic.map((b) => b.v)) * 0.98, Math.max(...bic.map((b) => b.v)) * 1.02] : [0, 1], xLabel: "k" });
+      if (!bic) { P.g.append("text").attr("class", "ax-label").attr("x", 190).attr("y", 60).attr("text-anchor", "middle").text("press “BIC scan” to compute"); return; }
+      P.line("bic", bic.map((b) => [b.k, b.v]), { color: "var(--series-5)" });
+      const best = bic.reduce((a, b) => (b.v < a.v ? b : a));
+      P.g.append("circle").attr("cx", P.x(best.k)).attr("cy", P.y(best.v)).attr("r", 5).attr("fill", "var(--series-5)");
+      el.closest(".lab-card").querySelector(".chart-legend").innerHTML = `best k = <b>${best.k}</b>`;
     }
-    initComps();
-
-    function eStep() {
-      const resp = points.map(() => new Array(comps.length).fill(0));
-      let ll = 0;
-      points.forEach((p, i) => {
-        const ws = comps.map((c) => c.weight * gaussPdf(p, c.mu, c.cov));
-        const s = ws.reduce((a, b) => a + b, 0) || 1e-9;
-        resp[i] = ws.map((w) => w / s);
-        ll += Math.log(s);
-        p.c = ws.indexOf(Math.max(...ws));
-      });
-      return { resp, ll };
-    }
-    function mStep(resp) {
-      const n = points.length;
-      comps.forEach((comp, k2) => {
-        let Nk = 0;
-        for (let i = 0; i < n; i++) Nk += resp[i][k2];
-        if (Nk < 1e-6) return;
-        let mx = 0, my = 0;
-        for (let i = 0; i < n; i++) { mx += resp[i][k2] * points[i].x; my += resp[i][k2] * points[i].y; }
-        mx /= Nk; my /= Nk;
-        let cxx = 0, cyy = 0, cxy = 0;
-        for (let i = 0; i < n; i++) {
-          const dx = points[i].x - mx, dy = points[i].y - my;
-          cxx += resp[i][k2] * dx * dx; cyy += resp[i][k2] * dy * dy; cxy += resp[i][k2] * dx * dy;
+    lab.q('[data-b="bic"]').onclick = () => {
+      const X = lab.points.map((p) => [p.x, p.y]); if (X.length < 10) return;
+      MLU.seedRng(77);
+      bic = d3.range(1, 8).map((k) => { let best = null; for (let r = 0; r < 3; r++) { const f = fitQuick(X, k, lab.val("cov")); if (!best || f.ll > best.ll) best = f; } return { k, v: -2 * best.ll + nParams(k, lab.val("cov")) * Math.log(X.length) }; });
+      drawBic();
+    };
+    drawBic();
+    const ellG = L.mid.append("g"), muG = L.top.append("g");
+    const respBars = Lab.bars(lab.R("panel-resp"), { w: 360, h: 120, yd: [0, 1] });
+    function render(f) {
+      const st = f.st, comp = st.comp;
+      if (!comp.length) { L.bg.selectAll("*").remove(); lab.drawPoints({}); return; }
+      if (lab.val("dens")) {
+        const grid = Lab.sampleGrid(pl, (x, y) => lse(comp.map((c) => Math.log(c.pi + 1e-12) + logN([x, y], c.mu, c.S))), 80);
+        L.bg.selectAll("*").remove();
+        const vals = grid.values.filter(isFinite); const hi = Math.max(...vals);
+        Lab.contour(L.under, pl, grid, d3.range(hi - 7, hi, 0.9), { cls: "dens", width: 0.8, stroke: "var(--text-faint)" });
+      } else { L.bg.selectAll("*").remove(); L.under.selectAll("path.dens").remove(); }
+      ellG.selectAll("*").remove(); muG.selectAll("*").remove();
+      comp.forEach((c, j) => {
+        for (const s of [1, 2]) {
+          const pth = ellG.append("path").attr("fill", s === 1 ? col(j) : "none").attr("fill-opacity", 0.07 + c.pi * 0.15).attr("stroke", col(j)).attr("stroke-width", s === 1 ? 2.2 : 1.2).attr("stroke-dasharray", s === 2 ? "5 4" : null);
+          if (st.prev && st.prev[j] && !noAnim) pth.attr("d", Lab.ellipsePath(pl, st.prev[j].mu, st.prev[j].S, s)).transition().duration(450).attr("d", Lab.ellipsePath(pl, c.mu, c.S, s));
+          else pth.attr("d", Lab.ellipsePath(pl, c.mu, c.S, s));
         }
-        cxx = cxx / Nk + 0.15; cyy = cyy / Nk + 0.15; cxy /= Nk;
-        comp.mu = { x: mx, y: my };
-        comp.cov = [[cxx, cxy], [cxy, cyy]];
-        comp.weight = Nk / n;
+        const src = st.prev && st.prev[j] && !noAnim ? st.prev[j] : c;
+        const m = muG.append("g").attr("transform", `translate(${pl.x(src.mu[0])},${pl.y(src.mu[1])})`);
+        m.append("circle").attr("r", 7).attr("fill", "var(--bg-inset)").attr("stroke", col(j)).attr("stroke-width", 2.4);
+        m.append("text").attr("class", "lbl-strong").attr("text-anchor", "middle").attr("y", -11).text(`π=${c.pi.toFixed(2)}`);
+        m.transition().duration(450).attr("transform", `translate(${pl.x(c.mu[0])},${pl.y(c.mu[1])})`);
       });
+      const R = st.R;
+      const pts = lab.drawPoints({ color: (d, i) => (R ? Lab.mixColor(R[i]) : "var(--text-faint)"), r: (d, i) => (i === hover ? 7 : 4.3), stroke: (d, i) => (i === hover ? "var(--text)" : "var(--bg)"), sw: (d, i) => (i === hover ? 2 : 1) });
+      pts.on("mouseenter.r", (ev, d) => { hover = lab.points.indexOf(d); noAnim = true; lab.player.redraw(); noAnim = false; });
+      const r = R && R[hover] ? R[hover] : comp.map(() => 0);
+      respBars.set(r.map((v, j) => ({ label: "comp " + j, value: v, color: col(j), text: (v * 100).toFixed(0) + "%" })));
+      const ll = R ? estep(lab.points.map((p) => [p.x, p.y]), comp).ll : null;
+      lab.readout(`<div class="kv"><span>log-likelihood</span><b>${fmt(ll, 1)}</b><span>BIC</span><b>${ll == null ? "–" : (-2 * ll + nParams(comp.length, lab.val("cov")) * Math.log(lab.points.length)).toFixed(1)}</b><span>parameters</span><b>${nParams(comp.length, lab.val("cov"))}</b></div>`);
     }
-
-    const ptsG = svg.append("g");
-    const ellG = svg.append("g");
-
-    function render() {
-      document.getElementById("gm-k-val").textContent = k();
-      document.getElementById("gm-iter").textContent = iter;
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y))
-        .attr("fill", (d) => MLU.palette[d.c % MLU.palette.length])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-
-      const esel = ellG.selectAll("ellipse").data(comps);
-      esel.enter().append("ellipse").attr("fill", "none").attr("stroke-width", 2)
-        .merge(esel)
-        .attr("cx", (d) => x(d.mu.x)).attr("cy", (d) => y(d.mu.y))
-        .attr("stroke", (d, i) => MLU.palette[i % MLU.palette.length])
-        .attr("transform", (d, i) => {
-          const eig = MLU.jacobiEigen(d.cov);
-          const [v0x, v0y] = eig.vectors[0];
-          const angle = Math.atan2(-v0y, v0x) * 180 / Math.PI; // flip y for screen coords
-          return `rotate(${angle} ${x(d.mu.x)} ${y(d.mu.y)})`;
-        })
-        .each(function (d) {
-          const eig = MLU.jacobiEigen(d.cov);
-          const scaleX = Math.abs(x(1) - x(0));
-          d3.select(this)
-            .attr("rx", Math.sqrt(Math.max(eig.values[0], 0.01)) * scaleX)
-            .attr("ry", Math.sqrt(Math.max(eig.values[1], 0.01)) * scaleX);
-        });
-      esel.exit().remove();
-
-      document.getElementById("gm-readout").innerHTML =
-        `points: <b>${points.length}</b><br>log-likelihood: <b class="num">${points.length ? loglik.toFixed(1) : "–"}</b><br>` +
-        comps.map((c, i) => `<span style="color:${MLU.palette[i]}">&pi;${i}=${c.weight.toFixed(2)}</span>`).join(" ");
-    }
-
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), c: 0 });
-      render();
-    });
-    document.getElementById("gm-k").addEventListener("input", () => { initComps(); render(); });
-    document.getElementById("gm-step").addEventListener("click", () => {
-      const { resp, ll } = eStep(); mStep(resp); loglik = ll; iter++; render();
-    });
-    document.getElementById("gm-run").addEventListener("click", () => {
-      let prev = -Infinity;
-      for (let i = 0; i < 100; i++) {
-        const { resp, ll } = eStep(); mStep(resp); loglik = ll; iter++;
-        if (Math.abs(ll - prev) < 1e-3) break;
-        prev = ll;
-      }
-      render();
-    });
-    document.getElementById("gm-reset").addEventListener("click", () => { initComps(); render(); });
-    document.getElementById("gm-regen").addEventListener("click", () => {
-      points = MLU.makeBlobs({ n: 80, clusters: 3, spread: 1.1 }).map((p) => ({ x: p.x, y: p.y, c: 0 }));
-      initComps(); render();
-    });
-
-    render();
-    return () => {};
+    lab.watch(["k", "cov", "it"], () => rerun());
+    lab.watch(["dens"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="rerun"]').onclick = () => { seed = (seed * 13 + 7) % 9973; rerun(); };
+    lab.loadPreset("aniso");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "gmm",
     name: "Gaussian Mixture Model",
     category: "Unsupervised - Clustering",
-    tagline: "EM algorithm, soft clusters",
-    description: "Soft clustering via Expectation-Maximization: components are full 2D Gaussians (with orientation), fit by alternating responsibility estimation (E) and weighted re-fitting (M).",
+    tagline: "EM with soft responsibilities, BIC",
+    description: "A mixture of Gaussians fitted by Expectation-Maximisation. Watch responsibilities blend point colours in the E-step and ellipses glide to new shapes in the M-step, track the log-likelihood, and pick k with a BIC scan.",
     info: {
       type: "Unsupervised - Clustering (soft/probabilistic). Generative mixture model.",
       scenario: "Clusters that overlap or have different sizes/shapes/orientations, or when you need membership probabilities rather than hard labels - a probabilistic generalization of K-Means.",

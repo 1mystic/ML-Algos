@@ -1,208 +1,156 @@
 (() => {
-  const GW = 9, GH = 6, CELL = 62;
-  const ACTIONS = [[0, -1], [0, 1], [-1, 0], [1, 0]]; // up, down, left, right
-  const ACTION_ANGLE = [-90, 90, 180, 0];
+  const { ui, col, fmt } = Lab;
+  const C = 9, R = 6;
+  const ACTS = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // up, right, down, left (dx, dy) with y down
+  const ANAME = ["↑", "→", "↓", "←"];
+  const LAYOUTS = {
+    cliff: () => { const g = blank(); g[R - 1][0] = "S"; g[R - 1][C - 1] = "G"; for (let c = 1; c < C - 1; c++) g[R - 1][c] = "P"; return g; },
+    maze: () => { const g = blank(); g[0][0] = "S"; g[R - 1][C - 1] = "G"; for (let r = 0; r < 4; r++) g[r][2] = "W"; for (let r = 2; r < R; r++) g[r][5] = "W"; g[2][7] = "P"; g[4][3] = "P"; return g; },
+    open: () => { const g = blank(); g[2][0] = "S"; g[2][C - 1] = "G"; g[1][4] = "P"; g[3][4] = "P"; g[2][4] = "W"; return g; },
+  };
+  function blank() { return Array.from({ length: R }, () => new Array(C).fill(".")); }
+  const REW = { G: 10, P: -10, ".": -0.1, S: -0.1 };
+
+  function simulate(grid, P) {
+    let start = [0, 0];
+    grid.forEach((row, y) => row.forEach((v, x) => { if (v === "S") start = [x, y]; }));
+    const Q = Array.from({ length: R }, () => Array.from({ length: C }, () => [0, 0, 0, 0]));
+    const frames = [], returns = [];
+    const step = (x, y, a) => {
+      if (MLU.rng() < P.slip) a = (a + (MLU.rng() < 0.5 ? 1 : 3)) % 4;
+      let nx = x + ACTS[a][0], ny = y + ACTS[a][1];
+      if (nx < 0 || ny < 0 || nx >= C || ny >= R || grid[ny][nx] === "W") { nx = x; ny = y; }
+      const cell = grid[ny][nx];
+      return { nx, ny, r: REW[cell] ?? -0.1, done: cell === "G" || cell === "P" };
+    };
+    const greedy = (q) => { const m = Math.max(...q); const best = [0, 1, 2, 3].filter((a) => q[a] === m); return best[MLU.randInt(best.length)]; };
+    const pick = (x, y, eps) => (MLU.rng() < eps ? MLU.randInt(4) : greedy(Q[y][x]));
+    const snapQ = () => Q.map((row) => row.map((q) => q.slice()));
+    const detailEps = 2;
+    for (let ep = 1; ep <= P.episodes; ep++) {
+      const eps = Math.max(0.02, P.eps * Math.pow(P.decay, ep - 1));
+      let [x, y] = start, a = pick(x, y, eps), G = 0, path = [[x, y]], n = 0;
+      while (n < 120) {
+        const { nx, ny, r, done } = step(x, y, a);
+        const a2 = pick(nx, ny, eps);
+        const target = done ? r : r + P.gamma * (P.algo === "sarsa" ? Q[ny][nx][a2] : Math.max(...Q[ny][nx]));
+        const old = Q[y][x][a];
+        Q[y][x][a] += P.alpha * (target - old);
+        G += r; n++;
+        path.push([nx, ny]);
+        if (ep <= detailEps && n <= 40) frames.push({ phase: "step", major: ep === 1 && n === 1, arch: ["s", "pol", "env", "td", "upd"], title: `Episode ${ep}, step ${n}: ${ANAME[a]} from (${x},${y}) → (${nx},${ny}), reward ${r}`, text: `TD target = ${done ? `r = ${r} (terminal)` : `r + γ·${P.algo === "sarsa" ? `Q(s′, a′=${ANAME[a2]})` : "max Q(s′,·)"} = ${r} + ${P.gamma}·${fmt((target - r) / P.gamma, 3)} = ${fmt(target, 3)}`}. Q(s, ${ANAME[a]}) moves from ${fmt(old, 3)} to <b>${fmt(Q[y][x][a], 3)}</b>. ε = ${eps.toFixed(2)}: early on the agent mostly explores at random.`, tex: P.algo === "sarsa" ? "Q(s,a)\\leftarrow Q(s,a)+\\alpha\\big[r+\\gamma Q(s',a')-Q(s,a)\\big]" : "Q(s,a)\\leftarrow Q(s,a)+\\alpha\\big[r+\\gamma\\max_{a'}Q(s',a')-Q(s,a)\\big]", st: { Q: snapQ(), agent: [nx, ny], path: path.slice(), upd: [x, y, a] }, m: {} });
+        x = nx; y = ny; a = a2;
+        if (done) break;
+      }
+      returns.push(G);
+      const show = ep > detailEps && (ep <= 12 || ep % Math.max(1, Math.round(P.episodes / 60)) === 0 || ep === P.episodes);
+      const m = { ret: G, avg: MLU.mean(returns.slice(-10)), len: n };
+      if (show || ep <= detailEps) frames.push({ phase: "episode", major: ep === detailEps + 1, arch: ["upd", "s"], title: `Episode ${ep} finished: return ${G.toFixed(1)} in ${n} steps`, text: `ε decays to ${eps.toFixed(2)}. Arrows show the current greedy policy (best action per cell); triangle colours show each action's Q-value. Value spreads backwards from the goal one experience at a time.`, tex: "V(s)=\\max_a Q(s,a),\\qquad \\pi(s)=\\arg\\max_a Q(s,a)", st: { Q: snapQ(), agent: [x, y], path, eps }, m });
+    }
+    // greedy rollout
+    let [x, y] = start; const path = [[x, y]];
+    for (let n = 0; n < 40; n++) {
+      const a = greedy(Q[y][x]);
+      let nx = x + ACTS[a][0], ny = y + ACTS[a][1];
+      if (nx < 0 || ny < 0 || nx >= C || ny >= R || grid[ny][nx] === "W") { nx = x; ny = y; }
+      x = nx; y = ny; path.push([x, y]);
+      frames.push({ phase: "greedy", arch: ["pol", "env"], title: `Greedy rollout, step ${n + 1}`, text: "Exploration off: the agent follows argmax Q. " + (P.algo === "sarsa" ? "SARSA learns the value of the policy it actually follows (with exploration), so it prefers a safer route away from pits." : "Q-learning learns the optimal greedy policy, so it hugs the shortest route even past the pits."), st: { Q: snapQ(), agent: [x, y], path: path.slice(), greedy: true }, m: {} });
+      if (grid[y][x] === "G" || grid[y][x] === "P") break;
+    }
+    return { frames, returns };
+  }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">episode <b id="ql-ep">0</b> · last reward <b id="ql-last">–</b></span></div>
-            <div class="btn-row">
-              <button id="ql-run1">run 1 episode</button>
-              <button id="ql-run50" class="primary">run 50 episodes</button>
-              <button id="ql-play">play greedy path</button>
-              <button id="ql-reset-q">reset Q-table</button>
-              <button id="ql-clear-grid">clear grid</button>
-            </div>
-          </div>
-          <div class="hscroll" style="align-self:center;max-width:100%"><svg id="ql-svg" width="${GW * CELL}" height="${GH * CELL}"></svg></div>
-          <div class="stage-hint">paint mode below, then click cells · S = start (fixed top-left) · shading = max Q-value · arrows = greedy action</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>paint</h3>
-            <div class="btn-row" id="ql-paint-buttons">
-              <button data-m="wall">wall</button>
-              <button data-m="goal">goal (+10)</button>
-              <button data-m="pit">pit (−10)</button>
-              <button data-m="empty">erase</button>
-            </div>
-          </div>
-          <div class="control-card">
-            <h3>hyperparameters</h3>
-            <div class="field"><label>&alpha; learning rate <span class="val" id="ql-alpha-val">0.3</span></label>
-              <input type="range" id="ql-alpha" min="1" max="90" step="1" value="30" /></div>
-            <div class="field"><label>&gamma; discount <span class="val" id="ql-gamma-val">0.9</span></label>
-              <input type="range" id="ql-gamma" min="10" max="99" step="1" value="90" /></div>
-            <div class="field"><label>&epsilon; exploration <span class="val" id="ql-eps-val">0.2</span></label>
-              <input type="range" id="ql-eps" min="0" max="80" step="1" value="20" /></div>
-          </div>
-          <div class="control-card">
-            <h3>state</h3>
-            <div class="readout" id="ql-readout">–</div>
-            <div class="note">Tabular Q-learning: Q(s,a) += &alpha;(r + &gamma;&middot;max<sub>a'</sub>Q(s',a') − Q(s,a)), with an &epsilon;-greedy behavior policy - the same update rule that DQN approximates with a network, done here with an exact table since the state space is small.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    let grid = Array.from({ length: GH }, () => new Array(GW).fill("empty"));
-    grid[1][6] = "goal"; grid[4][3] = "pit";
-    for (let i = 1; i < GH - 1; i++) grid[i][4] = "wall";
-    grid[2][4] = "empty";
-    const start = [0, 0];
-    let Q = Array.from({ length: GH }, () => Array.from({ length: GW }, () => new Array(4).fill(0)));
-    let episode = 0, paintMode = "wall";
-
-    function alpha() { return +document.getElementById("ql-alpha").value / 100; }
-    function gamma() { return +document.getElementById("ql-gamma").value / 100; }
-    function eps() { return +document.getElementById("ql-eps").value / 100; }
-
-    function step(pos, a) {
-      const [dx, dy] = ACTIONS[a];
-      let [px, py] = pos;
-      const nx = px + dx, ny = py + dy;
-      if (nx < 0 || nx >= GW || ny < 0 || ny >= GH || grid[ny][nx] === "wall") return { pos: [px, py], reward: -1, done: false };
-      const cell = grid[ny][nx];
-      if (cell === "goal") return { pos: [nx, ny], reward: 10, done: true };
-      if (cell === "pit") return { pos: [nx, ny], reward: -10, done: true };
-      return { pos: [nx, ny], reward: -0.1, done: false };
+    const lab = Lab.studio(root, {
+      id: "ql", fps: 6, plane: false,
+      stageHTML: `<svg data-r="grid" class="lab-svg" viewBox="0 0 640 430"></svg>`,
+      legend: ui.legend([["var(--series-3)", "goal +10"], ["var(--series-2)", "pit −10"], ["var(--text-faint)", "wall"], ["var(--series-4)", "agent"]]),
+      tools: `<div class="seg" data-r="paint"><button data-p="W" class="on">wall</button><button data-p="P">pit</button><button data-p="G">goal</button><button data-p="S">start</button><button data-p=".">erase</button></div>` + ui.btn("train", "train", true),
+      hint: "click cells to paint the selected tile · every step costs −0.1",
+      side: [
+        { title: "world", html: ui.select("layout", "layout", [["cliff", "cliff walk"], ["maze", "maze"], ["open", "open field"]], "cliff") + ui.range("slip", "slip probability (stochastic moves)", 0, 0.4, 0.05, 0) },
+        { title: "agent", html: ui.select("algo", "algorithm", [["q", "Q-learning (off-policy)"], ["sarsa", "SARSA (on-policy)"]], "q") + ui.range("alpha", "learning rate α", 0.05, 1, 0.05, 0.5) + ui.range("gamma", "discount γ", 0.5, 0.99, 0.01, 0.95) + ui.range("eps", "initial ε (exploration)", 0, 1, 0.05, 0.5) + ui.range("decay", "ε decay per episode", 0.9, 1, 0.005, 0.97) + ui.range("ep", "episodes", 10, 500, 10, 200) },
+      ],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "s", label: "state s", sub: "grid cell", x: 46, y: 40, kind: "data" },
+          { id: "pol", label: "ε-greedy π", sub: "explore / exploit", x: 170, y: 40, kind: "param" },
+          { id: "env", label: "environment", sub: "r, s′", x: 310, y: 40, kind: "op" },
+          { id: "td", label: "TD target", sub: "r + γ max Q(s′,·)", x: 300, y: 120, kind: "loss" },
+          { id: "upd", label: "Q(s,a) += α δ", sub: "table update", x: 140, y: 120, kind: "op" },
+          { id: "q", label: "Q table", sub: "|S| × |A|", x: 140, y: 172, kind: "out" },
+        ],
+        edges: [{ from: "s", to: "pol" }, { from: "pol", to: "env", label: "a" }, { from: "env", to: "td" }, { from: "td", to: "upd", label: "δ" }, { from: "upd", to: "q" }, { from: "upd", to: "s", dash: true, label: "s ← s′" }],
+      },
+      phases: { step: { label: "TD step", color: 0 }, episode: { label: "episode", color: 4 }, greedy: { label: "greedy rollout", color: 2 } },
+      charts: [{ id: "ret", title: "return per episode", custom: true }],
+      panels: [{ id: "qs", title: "Q-values at the agent's cell" }],
+      onFrame: render,
+    });
+    let grid = LAYOUTS.cliff(), paint = "W", sim = null;
+    const P = () => ({ algo: lab.val("algo"), alpha: lab.val("alpha"), gamma: lab.val("gamma"), eps: lab.val("eps"), decay: lab.val("decay"), episodes: lab.val("ep"), slip: lab.val("slip") });
+    function train() { MLU.seedRng(13); sim = simulate(grid, P()); drawRet(); lab.load(sim.frames, { play: true }); }
+    function drawRet() {
+      const el = lab.charts.ret.el; el.innerHTML = "";
+      const r = sim.returns;
+      const Pp = Lab.xy(el, { w: 360, h: 130, xd: [1, r.length], yd: [Math.min(...r), Math.max(...r, 0) + 0.5], xLabel: "episode" });
+      Pp.line("r", r.map((v, i) => [i + 1, v]), { color: "var(--series-1)", width: 1, curve: d3.curveLinear });
+      Pp.line("avg", r.map((v, i) => [i + 1, MLU.mean(r.slice(Math.max(0, i - 9), i + 1))]), { color: "var(--series-4)", width: 2.2 });
+      el.closest(".lab-card").querySelector(".chart-legend").innerHTML = `<span class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>return</span><span class="legend-item"><span class="swatch" style="background:var(--series-4)"></span>10-episode mean</span>`;
     }
-    function runEpisode(explore) {
-      let pos = [...start], total = 0;
-      for (let t = 0; t < 200; t++) {
-        const [px, py] = pos;
-        let a;
-        if (explore && MLU.rng() < eps()) a = MLU.randInt(4);
-        else { const qs = Q[py][px]; a = qs.indexOf(Math.max(...qs)); }
-        const { pos: npos, reward, done } = step(pos, a);
-        const [nx, ny] = npos;
-        const bestNext = Math.max(...Q[ny][nx]);
-        Q[py][px][a] += alpha() * (reward + gamma() * bestNext - Q[py][px][a]);
-        total += reward;
-        pos = npos;
-        if (done) return total;
-      }
-      return total;
-    }
-
-    const svg = d3.select("#ql-svg");
-    const cellG = svg.append("g");
-    const arrowG = svg.append("g");
-    const agentMarker = svg.append("circle").attr("r", CELL * 0.28).attr("fill", "var(--accent)").style("opacity", 0);
-
-    function maxQRange() {
-      let lo = Infinity, hi = -Infinity;
-      for (let i = 0; i < GH; i++) for (let j = 0; j < GW; j++) if (grid[i][j] === "empty") {
-        const m = Math.max(...Q[i][j]); lo = Math.min(lo, m); hi = Math.max(hi, m);
-      }
-      if (lo === Infinity) { lo = 0; hi = 1; }
-      return [lo, hi];
-    }
-
-    function render() {
-      document.getElementById("ql-ep").textContent = episode;
-      document.getElementById("ql-alpha-val").textContent = alpha().toFixed(2);
-      document.getElementById("ql-gamma-val").textContent = gamma().toFixed(2);
-      document.getElementById("ql-eps-val").textContent = eps().toFixed(2);
-
-      const [lo, hi] = maxQRange();
-      const cells = [];
-      for (let i = 0; i < GH; i++) for (let j = 0; j < GW; j++) cells.push({ i, j, type: grid[i][j] });
-      const sel = cellG.selectAll("rect").data(cells);
-      sel.enter().append("rect").attr("width", CELL - 2).attr("height", CELL - 2).attr("stroke", "var(--border-soft)")
-        .merge(sel)
-        .attr("x", (d) => d.j * CELL + 1).attr("y", (d) => d.i * CELL + 1)
-        .attr("fill", (d) => {
-          if (d.type === "wall") return "#3a3a3a";
-          if (d.type === "goal") return "#4ade80";
-          if (d.type === "pit") return "#f87171";
-          const q = Math.max(...Q[d.i][d.j]);
-          const t = hi > lo ? (q - lo) / (hi - lo) : 0.5;
-          return d3.interpolateRgb("#161616", "#3b82f6")(t);
-        })
-        .on("click", (event, d) => { if (d.i === start[1] && d.j === start[0]) return; grid[d.i][d.j] = paintMode; render(); });
-      sel.exit().remove();
-
-      const arrows = cells.filter((d) => d.type === "empty" && !(d.i === start[1] && d.j === start[0]));
-      const asel = arrowG.selectAll("path").data(arrows);
-      asel.enter().append("path").attr("d", `M ${-CELL * 0.18} ${-CELL * 0.12} L ${CELL * 0.18} 0 L ${-CELL * 0.18} ${CELL * 0.12} Z`).attr("fill", "var(--text-dim)")
-        .merge(asel)
-        .attr("transform", (d) => {
-          const qs = Q[d.i][d.j];
-          const a = qs.indexOf(Math.max(...qs));
-          const cx = d.j * CELL + CELL / 2, cy = d.i * CELL + CELL / 2;
-          return `translate(${cx},${cy}) rotate(${ACTION_ANGLE[a]})`;
-        })
-        .style("opacity", (d) => (Math.max(...Q[d.i][d.j]) !== 0 ? 0.8 : 0));
-      asel.exit().remove();
-
-      svg.selectAll("text.start-label").remove();
-      svg.append("text").attr("class", "start-label").attr("x", start[0] * CELL + CELL / 2).attr("y", start[1] * CELL + CELL / 2 + 4)
-        .attr("text-anchor", "middle").attr("fill", "var(--text)").attr("font-size", 13).attr("font-weight", 700).text("S");
-
-      document.getElementById("ql-readout").innerHTML = `grid: ${GW}×${GH}<br>episodes trained: <b>${episode}</b>`;
-    }
-
-    document.getElementById("ql-paint-buttons").addEventListener("click", (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
-      paintMode = btn.dataset.m;
-      document.querySelectorAll("#ql-paint-buttons button").forEach((b) => b.classList.toggle("primary", b.dataset.m === paintMode));
-    });
-    document.querySelector('#ql-paint-buttons button[data-m="wall"]').classList.add("primary");
-
-    document.getElementById("ql-run1").addEventListener("click", () => {
-      const r = runEpisode(true); episode++; document.getElementById("ql-last").textContent = r.toFixed(1); render();
-    });
-    document.getElementById("ql-run50").addEventListener("click", () => {
-      let r = 0; for (let i = 0; i < 50; i++) { r = runEpisode(true); episode++; }
-      document.getElementById("ql-last").textContent = r.toFixed(1); render();
-    });
-    document.getElementById("ql-reset-q").addEventListener("click", () => {
-      Q = Array.from({ length: GH }, () => Array.from({ length: GW }, () => new Array(4).fill(0)));
-      episode = 0; document.getElementById("ql-last").textContent = "–"; render();
-    });
-    document.getElementById("ql-clear-grid").addEventListener("click", () => {
-      grid = Array.from({ length: GH }, () => new Array(GW).fill("empty"));
-      render();
-    });
-    ["ql-alpha", "ql-gamma", "ql-eps"].forEach((id) => document.getElementById(id).addEventListener("input", render));
-
-    let playTimer = null;
-    document.getElementById("ql-play").addEventListener("click", () => {
-      if (playTimer) { clearInterval(playTimer); playTimer = null; }
-      let pos = [...start], t = 0, visited = new Set();
-      agentMarker.style("opacity", 1);
-      playTimer = setInterval(() => {
-        const [px, py] = pos;
-        agentMarker.attr("cx", px * CELL + CELL / 2).attr("cy", py * CELL + CELL / 2);
-        const key = px + "," + py;
-        if (t++ > 40 || visited.has(key)) { clearInterval(playTimer); playTimer = null; agentMarker.style("opacity", 0); return; }
-        visited.add(key);
-        const qs = Q[py][px];
-        const a = qs.indexOf(Math.max(...qs));
-        const { pos: npos, done } = step(pos, a);
-        pos = npos;
-        if (done) {
-          agentMarker.attr("cx", pos[0] * CELL + CELL / 2).attr("cy", pos[1] * CELL + CELL / 2);
-          clearInterval(playTimer); playTimer = null;
-          setTimeout(() => agentMarker.style("opacity", 0), 500);
+    lab.R("paint").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; paint = b.dataset.p; lab.R("paint").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); };
+    const svg = d3.select(lab.R("grid"));
+    const qBars = Lab.bars(lab.R("panel-qs"), { w: 360, h: 120, signed: true });
+    function render(f) {
+      const st = f.st;
+      svg.selectAll("*").remove();
+      const cs = Math.min(620 / C, 410 / R), ox = (640 - cs * C) / 2, oy = 10;
+      const allQ = st.Q.flat(2).map(Math.abs); const mx = Math.max(0.5, ...allQ);
+      for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+        const t = grid[y][x], X = ox + x * cs, Y = oy + y * cs;
+        const g = svg.append("g").style("cursor", "pointer").on("click", () => {
+          if (paint === "S") grid.forEach((row) => row.forEach((v, i) => { if (v === "S") row[i] = "."; }));
+          grid[y][x] = paint; train();
+        });
+        g.append("rect").attr("x", X).attr("y", Y).attr("width", cs - 1).attr("height", cs - 1).attr("fill", t === "W" ? "var(--text-faint)" : t === "G" ? "color-mix(in srgb, var(--series-3) 45%, var(--bg-inset))" : t === "P" ? "color-mix(in srgb, var(--series-2) 45%, var(--bg-inset))" : "var(--bg-inset)").attr("stroke", "var(--border-soft)");
+        if (t === "W" || t === "G" || t === "P") { g.append("text").attr("x", X + cs / 2).attr("y", Y + cs / 2 + 5).attr("text-anchor", "middle").style("font-size", "14px").attr("fill", "var(--text)").text(t === "G" ? "+10" : t === "P" ? "−10" : ""); continue; }
+        const q = st.Q[y][x], cx = X + cs / 2, cy = Y + cs / 2;
+        const tri = [[[X, Y], [X + cs - 1, Y]], [[X + cs - 1, Y], [X + cs - 1, Y + cs - 1]], [[X + cs - 1, Y + cs - 1], [X, Y + cs - 1]], [[X, Y + cs - 1], [X, Y]]];
+        tri.forEach((e, a) => {
+          const v = q[a];
+          const on = st.upd && st.upd[0] === x && st.upd[1] === y && st.upd[2] === a;
+          g.append("path").attr("d", `M${cx},${cy}L${e[0][0]},${e[0][1]}L${e[1][0]},${e[1][1]}Z`).attr("fill", v >= 0 ? `color-mix(in srgb, var(--series-3) ${Math.round(Math.min(1, v / mx) * 75)}%, transparent)` : `color-mix(in srgb, var(--series-2) ${Math.round(Math.min(1, -v / mx) * 75)}%, transparent)`).attr("stroke", on ? "var(--series-4)" : "var(--border-soft)").attr("stroke-width", on ? 3 : 0.5);
+        });
+        if (q.some((v) => v !== 0)) {
+          const a = q.indexOf(Math.max(...q));
+          const L2 = cs * 0.26;
+          g.append("line").attr("x1", cx - ACTS[a][0] * L2 * 0.6).attr("y1", cy - ACTS[a][1] * L2 * 0.6).attr("x2", cx + ACTS[a][0] * L2).attr("y2", cy + ACTS[a][1] * L2).attr("stroke", "var(--text)").attr("stroke-width", 2.2).attr("marker-end", "url(#ql-arr)");
         }
-      }, 260);
-    });
-
-    render();
-    return () => { if (playTimer) clearInterval(playTimer); };
+        if (t === "S") g.append("text").attr("x", X + 4).attr("y", Y + 12).style("font-size", "9px").attr("fill", "var(--text-dim)").text("start");
+      }
+      const defs = svg.append("defs");
+      defs.append("marker").attr("id", "ql-arr").attr("viewBox", "0 0 10 10").attr("refX", 6).attr("refY", 5).attr("markerWidth", 5).attr("markerHeight", 5).attr("orient", "auto").append("path").attr("d", "M0,0L10,5L0,10z").attr("fill", "var(--text)");
+      if (st.path && st.path.length > 1) svg.append("path").attr("d", d3.line().x((p) => ox + p[0] * cs + cs / 2).y((p) => oy + p[1] * cs + cs / 2)(st.path)).attr("fill", "none").attr("stroke", "var(--series-4)").attr("stroke-width", 3).attr("stroke-opacity", 0.6).attr("pointer-events", "none");
+      if (st.agent) svg.append("circle").attr("cx", ox + st.agent[0] * cs + cs / 2).attr("cy", oy + st.agent[1] * cs + cs / 2).attr("r", cs * 0.18).attr("fill", "var(--series-4)").attr("stroke", "var(--bg)").attr("stroke-width", 2).attr("pointer-events", "none");
+      const q = st.agent ? st.Q[st.agent[1]][st.agent[0]] : [0, 0, 0, 0];
+      qBars.set(q.map((v, a) => ({ label: ANAME[a], value: v, color: v >= 0 ? col(2) : col(1) })));
+      const m = f.m || {};
+      lab.readout(`<div class="kv"><span>algorithm</span><b>${P().algo === "sarsa" ? "SARSA" : "Q-learning"}</b><span>episodes</span><b>${sim.returns.length}</b><span>last return</span><b>${m.ret != null ? m.ret.toFixed(1) : "–"}</b><span>10-ep mean</span><b>${m.avg != null ? m.avg.toFixed(2) : "–"}</b></div>`);
+    }
+    lab.watch(["layout"], () => { grid = LAYOUTS[lab.val("layout")](); train(); });
+    lab.watch(["algo", "alpha", "gamma", "eps", "decay", "ep", "slip"], () => train());
+    lab.q('[data-b="train"]').onclick = () => train();
+    train();
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "q-learning",
     name: "Q-Learning Gridworld",
     category: "Reinforcement Learning",
-    tagline: "tabular TD control",
-    description: "An agent learns a value for every (state, action) pair purely from trial and error and a delayed reward, via the Q-learning temporal-difference update. Paint walls, a goal, and a pit, then train and watch it find the route.",
+    tagline: "TD control: Q-learning vs SARSA",
+    description: "An agent learns to reach the goal in an editable gridworld purely from rewards. Watch individual temporal-difference updates in the first episodes, then Q-values and the greedy policy spread back from the goal, and compare off-policy Q-learning with on-policy SARSA on the cliff.",
     info: {
       type: "Reinforcement Learning - value-based, model-free, off-policy, tabular temporal-difference control.",
       scenario: "Sequential decision-making where an agent must learn purely from trial-and-error reward signals (not labeled examples) which actions lead to good long-term outcomes under delayed rewards.",

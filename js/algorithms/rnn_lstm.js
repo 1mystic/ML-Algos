@@ -1,179 +1,201 @@
 (() => {
+  const { ui, col, fmt } = Lab;
   const HID = 4;
-  const sigmoid = (v) => 1 / (1 + Math.exp(-v));
-  const tanh = Math.tanh;
+  const sig = (v) => 1 / (1 + Math.exp(-v));
+  const rv = (n, s) => Array.from({ length: n }, () => MLU.randn() * s);
+  const rm = (n, m, s) => Array.from({ length: n }, () => rv(m, s));
+  const mv = (M, v) => M.map((r) => r.reduce((s, w, j) => s + w * v[j], 0));
 
-  function randVec(n, scale) { return Array.from({ length: n }, () => MLU.randn() * scale); }
-  function randMat(n, m, scale) { return Array.from({ length: n }, () => randVec(m, scale)); }
-  function matVec(M, v) { return M.map((row) => row.reduce((s, w, j) => s + w * v[j], 0)); }
-  function addV(...vs) { return vs[0].map((_, i) => vs.reduce((s, v) => s + v[i], 0)); }
-
-  function makeWeights(hasGates) {
-    const gates = hasGates ? ["f", "i", "o", "g"] : ["h"];
-    const w = {};
-    for (const g of gates) w[g] = { wx: randVec(HID, 0.9), wh: randMat(HID, HID, 0.4), b: randVec(HID, 0.2) };
-    return w;
+  function weights(type, rec, fbias) {
+    MLU.seedRng(12);
+    const gate = (b = 0) => ({ wx: rv(HID, 1.0), wh: rm(HID, HID, rec / Math.sqrt(HID)), b: rv(HID, 0.1).map((v) => v + b) });
+    if (type === "lstm") return { f: gate(fbias), i: gate(), g: gate(), o: gate() };
+    if (type === "gru") return { z: gate(), r: gate(), n: gate() };
+    return { h: gate() };
+  }
+  const pre = (G, x, h) => mv(G.wh, h).map((v, k) => v + G.wx[k] * x + G.b[k]);
+  function seq(kind, T) {
+    if (kind === "pulse") return Array.from({ length: T }, (_, t) => (t === 0 ? 1 : 0));
+    if (kind === "step") return Array.from({ length: T }, (_, t) => (t >= 3 ? 1 : 0));
+    if (kind === "sine") return Array.from({ length: T }, (_, t) => +Math.sin(t * 0.8).toFixed(2));
+    MLU.seedRng(5); return Array.from({ length: T }, () => (MLU.rng() < 0.5 ? 1 : 0));
   }
 
-  function stepLSTM(w, xt, hPrev, cPrev) {
-    const gate = (name, act) => {
-      const z = addV(w[name].wx.map((wx) => wx * xt), matVec(w[name].wh, hPrev), w[name].b);
-      return z.map(act);
-    };
-    const f = gate("f", sigmoid), i = gate("i", sigmoid), o = gate("o", sigmoid), g = gate("g", tanh);
-    const c = f.map((fv, k) => fv * cPrev[k] + i[k] * g[k]);
-    const h = c.map((cv, k) => o[k] * tanh(cv));
-    return { f, i, o, g, c, h };
-  }
-  function stepRNN(w, xt, hPrev) {
-    const z = addV(w.h.wx.map((wx) => wx * xt), matVec(w.h.wh, hPrev), w.h.b);
-    const h = z.map(tanh);
-    return { h };
+  function run(type, W, xs) {
+    let h = new Array(HID).fill(0), c = new Array(HID).fill(0);
+    const steps = [];
+    let J = null; // running Jacobian (RNN) / scalar memory (gated)
+    let mem = 1;
+    xs.forEach((x, t) => {
+      const s = { x, hPrev: h.slice(), cPrev: c.slice() };
+      if (type === "lstm") {
+        s.f = pre(W.f, x, h).map(sig); s.i = pre(W.i, x, h).map(sig); s.g = pre(W.g, x, h).map(Math.tanh); s.o = pre(W.o, x, h).map(sig);
+        c = c.map((cv, k) => s.f[k] * cv + s.i[k] * s.g[k]); h = c.map((cv, k) => s.o[k] * Math.tanh(cv));
+        if (t > 0) mem *= MLU.mean(s.f);
+      } else if (type === "gru") {
+        s.z = pre(W.z, x, h).map(sig); s.r = pre(W.r, x, h).map(sig);
+        const rh = h.map((v, k) => v * s.r[k]);
+        s.n = mv(W.n.wh, rh).map((v, k) => Math.tanh(v + W.n.wx[k] * x + W.n.b[k]));
+        h = h.map((v, k) => (1 - s.z[k]) * s.n[k] + s.z[k] * v);
+        if (t > 0) mem *= MLU.mean(s.z);
+      } else {
+        h = pre(W.h, x, h).map(Math.tanh);
+        if (t > 0) {
+          const D = h.map((v) => 1 - v * v);
+          const Jt = W.h.wh.map((row, a) => row.map((w) => w * D[a]));
+          J = J ? MLU.matMul(Jt, J) : Jt;
+          mem = Math.sqrt(J.flat().reduce((q, v) => q + v * v, 0) / HID);
+        }
+      }
+      s.h = h.slice(); s.c = c.slice(); s.mem = t === 0 ? 1 : mem;
+      steps.push(s);
+    });
+    return steps;
   }
 
-  function bars(svgSel, values, range, color, w, h) {
-    const n = values.length;
-    const bw = w / n;
-    const sel = svgSel.selectAll("rect").data(values);
-    const zeroY = range[0] < 0 ? h / 2 : h;
-    sel.enter().append("rect").attr("width", bw - 4)
-      .merge(sel)
-      .attr("x", (d, i) => i * bw + 2)
-      .attr("fill", color)
-      .attr("y", (d) => (d >= 0 ? zeroY - (d / range[1]) * (h / (range[0] < 0 ? 2 : 1)) : zeroY))
-      .attr("height", (d) => Math.max(1, Math.abs(d / range[1]) * (h / (range[0] < 0 ? 2 : 1))));
-    sel.exit().remove();
+  const ARCH = {
+    rnn: {
+      w: 380, h: 190,
+      nodes: [
+        { id: "x", label: "xₜ", sub: "input", x: 40, y: 150, w: 50, kind: "data" },
+        { id: "hp", label: "hₜ₋₁", sub: "previous state", x: 40, y: 50, kind: "param" },
+        { id: "lin", label: "Wₓx + Wₕh + b", sub: "affine", x: 180, y: 100, kind: "op" },
+        { id: "tanh", label: "tanh", x: 300, y: 100, w: 56, kind: "op" },
+        { id: "h", label: "hₜ", sub: "new state", x: 300, y: 30, w: 66, kind: "out" },
+      ],
+      edges: [{ from: "x", to: "lin" }, { from: "hp", to: "lin" }, { from: "lin", to: "tanh" }, { from: "tanh", to: "h" }, { from: "h", to: "hp", dash: true, label: "next step" }],
+    },
+    lstm: {
+      w: 380, h: 210,
+      nodes: [
+        { id: "x", label: "[hₜ₋₁, xₜ]", sub: "inputs", x: 46, y: 182, kind: "data" },
+        { id: "cp", label: "cₜ₋₁", x: 34, y: 34, w: 48, kind: "param" },
+        { id: "f", label: "f  σ", sub: "forget", x: 110, y: 120, w: 56, kind: "op", tex: "f=\\sigma(W_f[h,x]+b_f)" },
+        { id: "i", label: "i  σ", sub: "input", x: 178, y: 120, w: 56, kind: "op", tex: "i=\\sigma(W_i[h,x]+b_i)" },
+        { id: "g", label: "g  tanh", sub: "candidate", x: 246, y: 120, w: 62, kind: "op", tex: "g=\\tanh(W_g[h,x]+b_g)" },
+        { id: "o", label: "o  σ", sub: "output", x: 322, y: 120, w: 56, kind: "op", tex: "o=\\sigma(W_o[h,x]+b_o)" },
+        { id: "c", label: "c = f⊙c + i⊙g", sub: "cell state", x: 200, y: 34, kind: "loss" },
+        { id: "h", label: "h = o⊙tanh(c)", sub: "hidden", x: 326, y: 70, kind: "out" },
+      ],
+      edges: [{ from: "x", to: "f" }, { from: "x", to: "i" }, { from: "x", to: "g" }, { from: "x", to: "o" }, { from: "cp", to: "c" }, { from: "f", to: "c" }, { from: "i", to: "c" }, { from: "g", to: "c" }, { from: "c", to: "h" }, { from: "o", to: "h" }],
+    },
+    gru: {
+      w: 380, h: 200,
+      nodes: [
+        { id: "x", label: "[hₜ₋₁, xₜ]", sub: "inputs", x: 56, y: 166, kind: "data" },
+        { id: "z", label: "z  σ", sub: "update gate", x: 70, y: 86, kind: "op", tex: "z=\\sigma(W_z[h,x]+b_z)" },
+        { id: "r", label: "r  σ", sub: "reset gate", x: 180, y: 140, kind: "op", tex: "r=\\sigma(W_r[h,x]+b_r)" },
+        { id: "n", label: "n  tanh", sub: "candidate", x: 200, y: 70, kind: "op", tex: "n=\\tanh(W_nx+U_n(r\\odot h)+b_n)" },
+        { id: "h", label: "h = (1−z)⊙n + z⊙h", sub: "blend", x: 300, y: 24, kind: "out" },
+      ],
+      edges: [{ from: "x", to: "z" }, { from: "x", to: "r" }, { from: "r", to: "n" }, { from: "x", to: "n" }, { from: "z", to: "h" }, { from: "n", to: "h" }],
+    },
+  };
+
+  function buildFrames(type, steps) {
+    const frames = [{ phase: "init", major: true, arch: type === "rnn" ? ["hp"] : type === "lstm" ? ["cp"] : ["x"], title: "h₀ = 0" + (type === "lstm" ? ", c₀ = 0" : ""), text: "The same cell, with the same weights, is applied at every time step. Its state is the only thing carried forward: everything the network remembers must fit in it.", st: { t: -1 }, m: {} }];
+    steps.forEach((s, t) => {
+      const base = { x: s.x, t };
+      const m = { h0: s.h[0], h1: s.h[1], mem: s.mem };
+      if (type === "lstm") {
+        frames.push({ phase: "forget", major: t === 0, arch: ["x", "f", "cp", "c"], title: `t = ${t + 1}: forget gate`, text: `How much of each cell unit to keep: f = (${s.f.map((v) => v.toFixed(2)).join(", ")}). Values near 1 preserve memory, near 0 erase it.`, tex: "f_t=\\sigma\\big(W_f[h_{t-1},x_t]+b_f\\big)", st: { ...base, show: ["f"] }, m });
+        frames.push({ phase: "write", arch: ["x", "i", "g"], title: `t = ${t + 1}: input gate and candidate`, text: `g proposes new content (tanh, in [−1, 1]); i decides how much of it to write. Input xₜ = ${s.x}.`, tex: "i_t=\\sigma(W_i[h_{t-1},x_t]+b_i),\\quad g_t=\\tanh(W_g[h_{t-1},x_t]+b_g)", st: { ...base, show: ["f", "i", "g"] }, m });
+        frames.push({ phase: "cell", arch: ["f", "i", "g", "c"], title: `t = ${t + 1}: update the cell state`, text: "The cell state changes only through element-wise multiply and add, no squashing. That additive path is the gradient highway that lets LSTMs remember over long spans.", tex: "c_t=f_t\\odot c_{t-1}+i_t\\odot g_t", st: { ...base, show: ["f", "i", "g", "c"] }, m });
+        frames.push({ phase: "output", arch: ["o", "c", "h"], title: `t = ${t + 1}: output gate → hidden state`, text: `h = o ⊙ tanh(c) = (${s.h.map((v) => v.toFixed(2)).join(", ")}). The hidden state is a filtered view of the cell.`, tex: "o_t=\\sigma(W_o[h_{t-1},x_t]+b_o),\\quad h_t=o_t\\odot\\tanh(c_t)", st: { ...base, show: ["f", "i", "g", "c", "o", "h"] }, m });
+      } else if (type === "gru") {
+        frames.push({ phase: "gates", major: t === 0, arch: ["x", "z", "r"], title: `t = ${t + 1}: update and reset gates`, text: `z decides how much old state to keep, r how much of it the candidate may look at.`, tex: "z_t=\\sigma(W_z[h_{t-1},x_t]),\\quad r_t=\\sigma(W_r[h_{t-1},x_t])", st: { ...base, show: ["z", "r"] }, m });
+        frames.push({ phase: "cand", arch: ["r", "n"], title: `t = ${t + 1}: candidate state`, text: "A tanh candidate built from the input and the reset-gated old state.", tex: "n_t=\\tanh\\big(W_nx_t+U_n(r_t\\odot h_{t-1})+b_n\\big)", st: { ...base, show: ["z", "r", "n"] }, m });
+        frames.push({ phase: "blend", arch: ["z", "n", "h"], title: `t = ${t + 1}: blend old and new`, text: `h = (${s.h.map((v) => v.toFixed(2)).join(", ")}). When z ≈ 1 the state is copied through untouched, which is how GRUs carry memory.`, tex: "h_t=(1-z_t)\\odot n_t+z_t\\odot h_{t-1}", st: { ...base, show: ["z", "r", "n", "h"] }, m });
+      } else {
+        frames.push({ phase: "step", major: t === 0, arch: ["x", "hp", "lin", "tanh", "h"], title: `t = ${t + 1}: hₜ = tanh(Wₓxₜ + Wₕhₜ₋₁ + b)`, text: `Input ${s.x}; new state (${s.h.map((v) => v.toFixed(2)).join(", ")}). Memory of t = 1 still present: <b>${s.mem.toExponential(1)}</b> (norm of ∂hₜ/∂h₁). Each step multiplies by Wₕ and a tanh slope ≤ 1, so this shrinks or explodes geometrically.`, tex: "h_t=\\tanh(W_xx_t+W_hh_{t-1}+b),\\qquad \\frac{\\partial h_t}{\\partial h_1}=\\prod_{k=2}^{t}\\operatorname{diag}(1-h_k^2)\\,W_h", st: { ...base, show: ["h"] }, m });
+      }
+    });
+    const last = steps[steps.length - 1];
+    frames.push({ phase: "done", major: true, arch: type === "lstm" ? ["c", "h"] : ["h"], title: `Sequence processed: memory of the first step = ${last.mem.toExponential(1)}`, text: type === "rnn" ? "A plain RNN's sensitivity to early inputs decays (or blows up) exponentially with distance: the vanishing / exploding gradient problem. Compare with the LSTM at a forget bias of +2." : type === "lstm" ? "With forget gates near 1, the cell carries information across many steps with almost no decay. Lower the forget bias to watch the memory fade." : "The update gate plays the role of the LSTM's forget gate with fewer parameters.", st: { x: last.x, t: steps.length - 1, show: ["f", "i", "g", "o", "c", "h", "z", "r", "n"] }, m: { h0: last.h[0], h1: last.h[1], mem: last.mem } });
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">timestep <b id="rnn-t">0</b> / <span id="rnn-len">10</span></span></div>
-            <div class="btn-row">
-              <button id="rnn-step" class="primary">step →</button>
-              <button id="rnn-reset">reset</button>
-              <button id="rnn-rand">randomize weights</button>
-            </div>
-          </div>
-          <div style="padding:10px 4px">
-            <div class="stage-hint" style="margin-bottom:6px">input sequence - click a step to toggle 0 / 1</div>
-            <div id="rnn-seq" class="hscroll" style="display:flex;gap:4px;margin-bottom:16px"></div>
-            <div id="rnn-gates" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px"></div>
-            <div class="stage-hint" style="margin:16px 0 6px">hidden state h over time (unit 0)</div>
-            <svg id="rnn-trace" width="100%" height="80" viewBox="0 0 600 80" preserveAspectRatio="none"></svg>
-          </div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>cell type</h3>
-            <select id="rnn-type"><option value="lstm">LSTM</option><option value="rnn">vanilla RNN</option></select>
-          </div>
-          <div class="control-card">
-            <h3>mechanics</h3>
-            <div class="note" id="rnn-note"></div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const LSTM_NOTE = "At each step the LSTM computes forget (f), input (i) and output (o) gates plus a candidate (g), then updates the cell state c<sub>t</sub>=f&middot;c<sub>t-1</sub>+i&middot;g and hidden state h<sub>t</sub>=o&middot;tanh(c<sub>t</sub>) - the LSTM gating equations, run here with fixed random weights so you can watch the mechanics without a training loop.";
-    const RNN_NOTE = "A vanilla RNN collapses all of that into one update: h<sub>t</sub> = tanh(W<sub>x</sub>x<sub>t</sub> + W<sub>h</sub>h<sub>t-1</sub> + b). Compare its trace to the LSTM's - notice how much faster it can saturate or forget.";
-
-    let seq = [1, 0, 1, 1, 0, 0, 1, 0, 1, 1];
-    let weights = { lstm: makeWeights(true), rnn: makeWeights(false) };
-    let t = 0, h = new Array(HID).fill(0), c = new Array(HID).fill(0);
-    let trace = [];
-    let lastGates = {};
-
-    function type() { return document.getElementById("rnn-type").value; }
-
-    function renderSeq() {
-      const box = document.getElementById("rnn-seq");
-      box.innerHTML = "";
-      seq.forEach((v, i) => {
-        const b = document.createElement("button");
-        b.textContent = v;
-        b.style.width = "30px";
-        if (i === t) b.classList.add("primary");
-        b.addEventListener("click", () => { seq[i] = seq[i] ? 0 : 1; renderSeq(); });
-        box.appendChild(b);
-      });
-      document.getElementById("rnn-len").textContent = seq.length;
-    }
-
-    function renderGates() {
-      const box = document.getElementById("rnn-gates");
-      box.innerHTML = "";
-      const specs = type() === "lstm"
-        ? [["forget f", "f", [0, 1], "#fca5a5"], ["input i", "i", [0, 1], "#86efac"], ["output o", "o", [0, 1], "#7dd3fc"], ["candidate g", "g", [-1, 1], "#fcd34d"], ["cell c", "c", [-2, 2], "#c4b5fd"], ["hidden h", "h", [-1, 1], "#f5f5f4"]]
-        : [["hidden h", "h", [-1, 1], "#f5f5f4"]];
-      const last = lastGates || {};
-      for (const [label, key, range, color] of specs) {
-        const wrap = document.createElement("div");
-        wrap.innerHTML = `<div class="stage-hint" style="margin-bottom:4px">${label}</div>`;
-        const svg = d3.select(document.createElementNS(MLU.NS, "svg"));
-        svg.attr("width", "100%").attr("height", 54).attr("viewBox", "0 0 120 54");
-        wrap.appendChild(svg.node());
-        box.appendChild(wrap);
-        const vals = key === "h" ? h : (last[key] || new Array(HID).fill(0));
-        bars(svg, vals, range, color, 120, 54);
-      }
-    }
-
-    function renderTrace() {
-      const svg = d3.select("#rnn-trace");
-      svg.selectAll("*").remove();
-      if (trace.length < 2) return;
-      const xs = d3.scaleLinear().domain([0, seq.length - 1]).range([4, 596]);
-      const ys = d3.scaleLinear().domain([-1, 1]).range([76, 4]);
-      const line = d3.line().x((d, i) => xs(i)).y((d) => ys(d));
-      svg.append("path").attr("d", line(trace)).attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2);
-      svg.selectAll("circle").data(trace).enter().append("circle").attr("cx", (d, i) => xs(i)).attr("cy", (d) => ys(d)).attr("r", 3).attr("fill", "var(--accent)");
-    }
-
-    function render() {
-      document.getElementById("rnn-t").textContent = t;
-      document.getElementById("rnn-note").innerHTML = type() === "lstm" ? LSTM_NOTE : RNN_NOTE;
-      renderSeq();
-      renderGates();
-      renderTrace();
-    }
-
-    function reset() {
-      t = 0; h = new Array(HID).fill(0); c = new Array(HID).fill(0); trace = []; lastGates = {};
-      render();
-    }
-
-    document.getElementById("rnn-step").addEventListener("click", () => {
-      if (t >= seq.length) return;
-      const xt = seq[t] ? 1 : -1;
-      if (type() === "lstm") {
-        const out = stepLSTM(weights.lstm, xt, h, c);
-        h = out.h; c = out.c; lastGates = out;
-      } else {
-        const out = stepRNN(weights.rnn, xt, h);
-        h = out.h; lastGates = out;
-      }
-      trace.push(h[0]);
-      t++;
-      render();
+    const lab = Lab.studio(root, {
+      id: "rnn", fps: 3, plane: false,
+      stageHTML: `<svg data-r="unroll" class="lab-svg" viewBox="0 0 760 250"></svg>`,
+      legend: ui.legend([["var(--series-1)", "positive"], ["var(--series-2)", "negative"], ["var(--series-4)", "current step", "ring"]]),
+      tools: ui.btn("replay", "replay", true),
+      hint: "click an input bar to toggle it between 0 and 1 · the same weights are reused at every step",
+      side: [
+        { title: "cell", html: `<div class="seg" data-r="type" style="margin-bottom:12px"><button data-t="rnn">RNN</button><button data-t="lstm" class="on">LSTM</button><button data-t="gru">GRU</button></div>` + ui.range("fb", "forget-gate bias (LSTM)", -3, 4, 0.5, 2) + ui.range("rec", "recurrent weight scale", 0.2, 3, 0.1, 1.2) },
+        { title: "input", html: ui.select("seq", "sequence", [["pulse", "single pulse at t = 1"], ["step", "step at t = 4"], ["sine", "sine wave"], ["bits", "random bits"]], "pulse") + ui.range("T", "length", 4, 16, 1, 10) },
+      ],
+      arch: ARCH.lstm, archTitle: "inside the cell",
+      phases: { init: { label: "init", color: 3 }, forget: { label: "forget gate", color: 1 }, write: { label: "write", color: 0 }, cell: { label: "cell update", color: 3 }, output: { label: "output", color: 2 }, gates: { label: "gates", color: 1 }, cand: { label: "candidate", color: 0 }, blend: { label: "blend", color: 2 }, step: { label: "time step", color: 0 }, done: { label: "done", color: 2 } },
+      panels: [{ id: "gates", title: "gate & state values at this step", sub: "rows = vectors, columns = 4 hidden units" }],
+      charts: [{ id: "h", title: "hidden units over time", series: [{ key: "h0", label: "h[0]", color: "var(--series-1)" }, { key: "h1", label: "h[1]", color: "var(--series-5)" }] }, { id: "mem", title: "memory of t = 1 (gradient flow)", series: [{ key: "mem", label: "‖∂hₜ/∂h₁‖ (approx.)", color: "var(--series-2)", digits: 4 }], logY: true }],
+      onFrame: render,
     });
-    document.getElementById("rnn-reset").addEventListener("click", reset);
-    document.getElementById("rnn-rand").addEventListener("click", () => { weights = { lstm: makeWeights(true), rnn: makeWeights(false) }; reset(); });
-    document.getElementById("rnn-type").addEventListener("change", reset);
-
-    reset();
-    return () => {};
+    let type = "lstm", xs = seq("pulse", 10), steps = null;
+    function rebuildArch() {
+      const el = lab.R("arch"); el.innerHTML = "";
+      lab.arch = Lab.arch(el, ARCH[type], { onNode: (nid) => { const fr = lab.player.frames; const j = fr.findIndex((f, k) => k > lab.player.index && (f.arch || []).includes(nid)); if (j >= 0) { lab.player.pause(); lab.player.show(j); } } });
+    }
+    function replay({ at = "start" } = {}) {
+      lab.ctl("fb").closest(".field").style.opacity = type === "lstm" ? 1 : 0.4;
+      steps = run(type, weights(type, lab.val("rec"), lab.val("fb")), xs);
+      lab.load(buildFrames(type, steps), { at, play: at === "start" });
+    }
+    lab.R("type").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; type = b.dataset.t; lab.R("type").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); rebuildArch(); replay(); };
+    const gm = Lab.matrix(lab.R("panel-gates"), { cell: 30, colLabels: ["u1", "u2", "u3", "u4"], labelW: 52, range: [-1, 1] });
+    const svg = d3.select(lab.R("unroll"));
+    function render(f) {
+      const st = f.st, T = xs.length;
+      svg.selectAll("*").remove();
+      const W = 760, dx = Math.min(70, (W - 60) / T), x0 = 40;
+      const cx = (t) => x0 + dx * t + dx / 2;
+      const bar = (g, v, x, y, w, h) => g.append("rect").attr("x", x).attr("y", v >= 0 ? y - (h * Math.min(1, v)) : y).attr("width", w).attr("height", Math.max(0.5, h * Math.min(1, Math.abs(v)))).attr("fill", v >= 0 ? "var(--series-1)" : "var(--series-2)").attr("rx", 1);
+      svg.append("text").attr("class", "lbl").attr("x", 4).attr("y", 215).text("xₜ");
+      svg.append("text").attr("class", "lbl").attr("x", 4).attr("y", 52).text("hₜ");
+      if (type === "lstm") svg.append("text").attr("class", "lbl").attr("x", 4).attr("y", 18).text("cₜ");
+      for (let t = 0; t < T; t++) {
+        const on = t === st.t, past = t <= st.t;
+        // input bar
+        const gx = svg.append("g").style("cursor", "pointer").on("click", () => { xs[t] = xs[t] ? 0 : 1; replay({ at: "end" }); });
+        gx.append("rect").attr("x", cx(t) - 14).attr("y", 186).attr("width", 28).attr("height", 40).attr("fill", "transparent");
+        gx.append("line").attr("x1", cx(t) - 14).attr("x2", cx(t) + 14).attr("y1", 222).attr("y2", 222).attr("stroke", "var(--border)");
+        bar(gx, xs[t], cx(t) - 8, 222, 16, 34);
+        svg.append("line").attr("x1", cx(t)).attr("x2", cx(t)).attr("y1", 184).attr("y2", 150).attr("stroke", past ? "var(--text-faint)" : "var(--border)");
+        // cell box
+        svg.append("rect").attr("x", cx(t) - dx * 0.36).attr("y", 104).attr("width", dx * 0.72).attr("height", 44).attr("rx", 7).attr("fill", on ? "color-mix(in srgb, var(--series-4) 16%, var(--bg-raised))" : past ? "var(--bg-raised)" : "var(--bg-inset)").attr("stroke", on ? "var(--series-4)" : "var(--border)").attr("stroke-width", on ? 2.4 : 1);
+        svg.append("text").attr("x", cx(t)).attr("y", 130).attr("text-anchor", "middle").style("font-size", "10px").attr("fill", past ? "var(--text)" : "var(--text-faint)").text(type.toUpperCase());
+        if (t < T - 1) svg.append("line").attr("x1", cx(t) + dx * 0.36).attr("x2", cx(t + 1) - dx * 0.36).attr("y1", 126).attr("y2", 126).attr("stroke", t < st.t ? "var(--text-dim)" : "var(--border)").attr("stroke-width", 1.6);
+        // hidden state bars
+        if (past && steps[t]) {
+          const s = steps[t];
+          s.h.forEach((v, k) => bar(svg, v, cx(t) - 16 + k * 8, 76, 6, 34));
+          svg.append("line").attr("x1", cx(t) - 18).attr("x2", cx(t) + 18).attr("y1", 76).attr("y2", 76).attr("stroke", "var(--border)");
+          if (type === "lstm") { s.c.forEach((v, k) => bar(svg, Math.tanh(v), cx(t) - 16 + k * 8, 26, 6, 18)); svg.append("line").attr("x1", cx(t) - 18).attr("x2", cx(t) + 18).attr("y1", 26).attr("y2", 26).attr("stroke", "var(--border)"); }
+        }
+        svg.append("text").attr("x", cx(t)).attr("y", 243).attr("text-anchor", "middle").style("font-size", "9px").attr("fill", "var(--text-faint)").text(`t=${t + 1}`);
+      }
+      if (type === "lstm") svg.append("line").attr("x1", x0).attr("x2", cx(Math.max(0, st.t)) + 18).attr("y1", 32).attr("y2", 32).attr("stroke", "var(--series-3)").attr("stroke-width", 1.4).attr("stroke-dasharray", "4 3").attr("opacity", st.t >= 0 ? 0.7 : 0);
+      // gate matrix
+      const s = st.t >= 0 ? steps[st.t] : null;
+      const keys = type === "lstm" ? ["f", "i", "g", "o", "c", "h"] : type === "gru" ? ["z", "r", "n", "h"] : ["h"];
+      const rows = keys.map((k) => (s && (st.show || []).includes(k) ? s[k].map((v) => (k === "c" ? Math.tanh(v) : v)) : [NaN, NaN, NaN, NaN]));
+      gm.set(rows.map((r) => r.map((v) => (isFinite(v) ? v : 0))), { rowL: keys.map((k) => (k === "c" ? "tanh(c)" : k)), range: [-1, 1] });
+      lab.readout(`<div class="kv"><span>cell</span><b>${type.toUpperCase()}</b><span>parameters</span><b>${(type === "lstm" ? 4 : type === "gru" ? 3 : 1) * (HID * HID + HID + HID)}</b><span>step</span><b>${Math.max(0, st.t + 1)} / ${T}</b><span>memory of t = 1</span><b>${s ? s.mem.toExponential(1) : "–"}</b></div><div class="note">Weights are fixed random draws (seeded), not trained: the point is the mechanics of the recurrence.</div>`);
+    }
+    lab.watch(["fb", "rec"], () => replay({ at: "end" }));
+    lab.watch(["seq", "T"], () => { xs = seq(lab.val("seq"), lab.val("T")); replay(); });
+    lab.q('[data-b="replay"]').onclick = () => replay();
+    replay();
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "rnn-lstm",
     name: "RNN / LSTM Cell",
     category: "Deep Learning",
-    tagline: "step through the gate equations",
-    description: "Step a recurrent cell through a binary sequence one timestep at a time, watching every gate activation, the cell state, and the hidden state update live. Toggle between a vanilla RNN and an LSTM to compare.",
+    tagline: "unrolled RNN / LSTM / GRU, gate by gate",
+    description: "Unroll a recurrent cell over a sequence and step through every gate: forget, input, candidate, cell update and output for the LSTM, the two gates of the GRU, or the plain tanh RNN, while a gradient-flow chart shows why plain RNNs forget.",
     info: {
       type: "Building block of sequence models - recurrent, parametric, stateful (vanilla RNN or LSTM cell).",
       scenario: "Sequence data where order and (for LSTM) long-range dependencies matter - text, time series, audio - anywhere a fixed-size input vector isn't natural.",

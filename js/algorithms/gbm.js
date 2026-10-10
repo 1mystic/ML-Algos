@@ -1,132 +1,129 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-
-  function sse(vals) {
-    if (!vals.length) return 0;
-    const m = MLU.mean(vals);
-    return vals.reduce((s, v) => s + (v - m) ** 2, 0);
-  }
-  function buildRegTree(pts, depth, maxDepth) {
-    if (depth >= maxDepth || pts.length < 4) return { leaf: true, value: MLU.mean(pts.map((p) => p.r)) };
-    const xs = [...new Set(pts.map((p) => p.x))].sort((a, b) => a - b);
+  const { ui, col, fmt } = Lab;
+  const median = (a) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  function regTree(xs, rs, idx, depth, maxDepth, minLeaf) {
+    const vals = idx.map((i) => rs[i]);
+    const mean = MLU.mean(vals);
+    if (depth >= maxDepth || idx.length < 2 * minLeaf) return { leaf: true, idx, value: mean };
+    const sorted = idx.slice().sort((a, b) => xs[a] - xs[b]);
+    let sL = 0, sL2 = 0, sT = 0, sT2 = 0;
+    for (const i of sorted) { sT += rs[i]; sT2 += rs[i] ** 2; }
     let best = null;
-    for (let i = 0; i < xs.length - 1; i++) {
-      const thr = (xs[i] + xs[i + 1]) / 2;
-      const left = pts.filter((p) => p.x <= thr), right = pts.filter((p) => p.x > thr);
-      if (!left.length || !right.length) continue;
-      const cost = sse(left.map((p) => p.r)) + sse(right.map((p) => p.r));
-      if (!best || cost < best.cost) best = { cost, thr, left, right };
+    for (let k = 0; k < sorted.length - 1; k++) {
+      const r = rs[sorted[k]]; sL += r; sL2 += r * r;
+      const nl = k + 1, nr = sorted.length - nl;
+      if (nl < minLeaf || nr < minLeaf || xs[sorted[k + 1]] - xs[sorted[k]] < 1e-9) continue;
+      const sse = sL2 - (sL * sL) / nl + (sT2 - sL2) - ((sT - sL) ** 2) / nr;
+      if (!best || sse < best.sse) best = { sse, thr: (xs[sorted[k]] + xs[sorted[k + 1]]) / 2 };
     }
-    if (!best) return { leaf: true, value: MLU.mean(pts.map((p) => p.r)) };
-    return { leaf: false, thr: best.thr, left: buildRegTree(best.left, depth + 1, maxDepth), right: buildRegTree(best.right, depth + 1, maxDepth) };
+    if (!best) return { leaf: true, idx, value: mean };
+    return { leaf: false, thr: best.thr, left: regTree(xs, rs, idx.filter((i) => xs[i] <= best.thr), depth + 1, maxDepth, minLeaf), right: regTree(xs, rs, idx.filter((i) => xs[i] > best.thr), depth + 1, maxDepth, minLeaf) };
   }
-  function predictTree(node, x) { return node.leaf ? node.value : predictTree(x <= node.thr ? node.left : node.right, x); }
+  const predT = (t, x) => (t.leaf ? t.value : predT(x <= t.thr ? t.left : t.right, x));
+  const leaves = (t) => (t.leaf ? [t] : leaves(t.left).concat(leaves(t.right)));
+  const LOSS = {
+    squared: { grad: (y, F) => y - F, name: "squared error", tex: "r_i=y_i-F(x_i)", leaf: null },
+    absolute: { grad: (y, F) => Math.sign(y - F), name: "absolute error", tex: "r_i=\\operatorname{sign}(y_i-F(x_i))", leaf: (res) => median(res) },
+    huber: { grad: (y, F) => Math.max(-1.5, Math.min(1.5, y - F)), name: "Huber (δ = 1.5)", tex: "r_i=\\operatorname{clip}(y_i-F(x_i),-\\delta,\\delta)", leaf: (res) => { const m = median(res); return m + MLU.mean(res.map((v) => Math.max(-1.5, Math.min(1.5, v - m)))); } },
+  };
 
-  function targetFn(xv) { return 2.4 * Math.sin(xv * 0.7) + 0.15 * xv; }
+  function buildFrames(pts, { depth, lr, rounds, loss }) {
+    const train = pts.filter((p) => !p.test), test = pts.filter((p) => p.test);
+    if (train.length < 3) return [{ phase: "idle", title: "Add more points", text: "", st: { trees: [], F0: 0 } }];
+    const xs = train.map((p) => p.x), ys = train.map((p) => p.y);
+    const L = LOSS[loss];
+    const F0 = loss === "squared" ? MLU.mean(ys) : median(ys);
+    const trees = [];
+    const Fx = (x) => F0 + trees.reduce((s, t) => s + lr * predT(t, x), 0);
+    const mse = (set) => (set.length ? MLU.mean(set.map((p) => (p.y - Fx(p.x)) ** 2)) : null);
+    const frames = [{ phase: "init", major: true, arch: ["f0"], title: `Start with a constant: F₀ = ${F0.toFixed(2)}`, text: `The best constant under ${L.name} is the ${loss === "squared" ? "mean" : "median"} of y. Every later tree only has to explain what this misses.`, tex: loss === "squared" ? "F_0=\\arg\\min_c\\sum_i (y_i-c)^2=\\bar y" : "F_0=\\operatorname{median}(y)", st: { trees: [], F0 }, m: { train: mse(train), test: mse(test) } }];
+    for (let m = 1; m <= rounds; m++) {
+      const F = xs.map((x) => Fx(x));
+      const r = ys.map((y, i) => L.grad(y, F[i]));
+      const idx = xs.map((_, i) => i);
+      const tree = regTree(xs, r, idx, 0, depth, 2);
+      if (L.leaf) for (const lf of leaves(tree)) lf.value = L.leaf(lf.idx.map((i) => ys[i] - F[i]));
+      const show = m <= 4 || m % Math.max(1, Math.round(rounds / 25)) === 0 || m === rounds;
+      if (show) {
+        frames.push({ phase: "resid", arch: ["F", "loss", "res"], title: `Round ${m}: compute pseudo-residuals`, text: `The negative gradient of the loss at the current prediction. ${loss === "squared" ? "For squared error that is simply the residual y − F." : "Under this loss it is a bounded version of the residual, so outliers cannot dominate."} Mean |r| = <b>${MLU.mean(r.map(Math.abs)).toFixed(3)}</b>.`, tex: `${L.tex}=-\\left.\\frac{\\partial L(y_i,F)}{\\partial F}\\right|_{F=F_{m-1}(x_i)}`, st: { trees: trees.slice(), F0, r, showR: true }, m: { train: mse(train), test: mse(test) } });
+        frames.push({ phase: "fit", arch: ["res", "tree"], title: `Round ${m}: fit a depth-${depth} tree to the residuals`, text: `A small regression tree h<sub>${m}</sub> approximates the residual pattern with ${leaves(tree).length} piecewise-constant steps (orange, lower plot).`, tex: "h_m=\\arg\\min_h\\sum_i\\big(r_i-h(x_i)\\big)^2", st: { trees: trees.slice(), F0, r, showR: true, h: tree }, m: { train: mse(train), test: mse(test) } });
+      }
+      trees.push(tree);
+      if (show) frames.push({ phase: "add", major: m === 1, arch: ["tree", "shrink", "F"], title: `Round ${m}: add the shrunken tree`, text: `F ← F + ν·h with ν = ${lr}. Small steps mean each tree corrects only part of the error: slower, but it generalises better. Train MSE <b>${mse(train).toFixed(3)}</b>${test.length ? `, test MSE <b>${mse(test).toFixed(3)}</b>` : ""}.`, tex: "F_m(x)=F_{m-1}(x)+\\nu\\,h_m(x)", st: { trees: trees.slice(), F0, h: tree, prevN: trees.length - 1 }, m: { train: mse(train), test: mse(test) } });
+    }
+    frames.push({ ...frames[frames.length - 1], phase: "done", major: true, arch: ["F", "out"], title: `${rounds} trees added`, text: "Gradient boosting is gradient descent in function space: each tree is one step along the negative gradient. Watch the test curve: with a high learning rate or many deep trees it eventually turns up while training error keeps falling." });
+    return frames;
+  }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint" style="font-size:11.5px">trees in ensemble: <b id="gbm-count">0</b></span></div>
-            <div class="btn-row">
-              <button id="gbm-step" class="primary">+ 1 tree</button>
-              <button id="gbm-step10">+ 10 trees</button>
-              <button id="gbm-reset">reset ensemble</button>
-              <button id="gbm-regen">regenerate data</button>
-            </div>
-          </div>
-          <svg id="gbm-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">each click fits one shallow tree to the current residuals and shrinks it into the ensemble</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>hyperparameters</h3>
-            <div class="field"><label>tree depth <span class="val" id="gbm-depth-val">2</span></label>
-              <input type="range" id="gbm-depth" min="1" max="4" step="1" value="2" /></div>
-            <div class="field"><label>learning rate <span class="val" id="gbm-lr-val">0.30</span></label>
-              <input type="range" id="gbm-lr" min="5" max="100" step="5" value="30" /></div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="gbm-readout">–</div>
-            <div class="note">Gradient boosting on squared error: F<sub>0</sub> = mean(y); each new shallow tree is fit to the current residual y − F(x), then added in as F += &eta;&middot;tree(x).</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#gbm-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    function genData() {
-      const pts = [];
-      for (let i = 0; i < 45; i++) { const xv = MLU.randRange(...DOMAIN); pts.push({ x: xv, y: targetFn(xv) + MLU.randn() * 0.6 }); }
-      return pts;
-    }
-    let points = genData();
-    let trees = [], F0 = 0;
-
-    function depth() { return +document.getElementById("gbm-depth").value; }
-    function lr() { return +document.getElementById("gbm-lr").value / 100; }
-
-    function predict(xv) { return F0 + trees.reduce((s, t) => s + lr() * predictTree(t, xv), 0); }
-
-    const path = svg.append("path").attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2.2);
-    const ptsG = svg.append("g");
-
-    function render() {
-      document.getElementById("gbm-count").textContent = trees.length;
-      document.getElementById("gbm-depth-val").textContent = depth();
-      document.getElementById("gbm-lr-val").textContent = lr().toFixed(2);
-
-      const steps = 160;
-      const line = d3.line().x((d) => x(d[0])).y((d) => y(d[1]));
-      const curve = Array.from({ length: steps + 1 }, (_, i) => {
-        const xv = DOMAIN[0] + (i / steps) * (DOMAIN[1] - DOMAIN[0]);
-        return [xv, predict(xv)];
-      });
-      path.attr("d", line(curve));
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 4.5).attr("fill", MLU.palette[0]).attr("stroke", "var(--bg)").attr("stroke-width", 1)
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y));
-      sel.exit().remove();
-
-      const mse = points.length ? MLU.mean(points.map((p) => (p.y - predict(p.x)) ** 2)) : 0;
-      document.getElementById("gbm-readout").innerHTML =
-        `points: <b>${points.length}</b><br>trees: <b>${trees.length}</b><br>train MSE: <b class="num">${mse.toFixed(3)}</b>`;
-    }
-
-    function boost() {
-      const residPts = points.map((p) => ({ x: p.x, r: p.y - predict(p.x) }));
-      trees.push(buildRegTree(residPts, 0, depth()));
-    }
-
-    document.getElementById("gbm-step").addEventListener("click", () => { boost(); render(); });
-    document.getElementById("gbm-step10").addEventListener("click", () => { for (let i = 0; i < 10; i++) boost(); render(); });
-    document.getElementById("gbm-reset").addEventListener("click", () => { trees = []; F0 = points.length ? MLU.mean(points.map((p) => p.y)) : 0; render(); });
-    document.getElementById("gbm-regen").addEventListener("click", () => {
-      points = genData(); trees = []; F0 = MLU.mean(points.map((p) => p.y)); render();
+    const lab = Lab.studio(root, {
+      id: "gbm", fps: 4,
+      legend: ui.legend([["var(--accent)", "ensemble F(x)", "line"], ["var(--series-1)", "train"], ["var(--text-faint)", "test (hollow)", "ring"], ["var(--series-7)", "new tree hₘ", "line"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      stageHTML: `<svg data-r="svg" class="lab-svg"></svg><div class="sub-cap" style="margin-top:8px">pseudo-residuals rᵢ and the tree fitted to them</div><svg data-r="res" class="lab-svg"></svg>`,
+      plane: { h: 330, xLabel: "x", yLabel: "y" },
+      hint: "every 4th point is held out as test data · click to add training points · drag / double-click to edit",
+      data: { kind: "reg", presets: ["sine", "step", "cubic", "quad", "rlinear", "routliers"], def: "sine", n: 60, noise: 0.3 },
+      side: [{ title: "boosting", html: ui.range("depth", "tree depth", 1, 5, 1, 2) + ui.range("lr", "learning rate ν", 0.05, 1, 0.05, 0.3) + ui.range("M", "rounds M", 1, 150, 1, 40) + ui.select("loss", "loss", [["squared", "squared error"], ["absolute", "absolute error (median)"], ["huber", "Huber"]], "squared") }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "f0", label: "F₀", sub: "constant", x: 36, y: 40, w: 54, kind: "param" },
+          { id: "F", label: "Fₘ₋₁(x)", sub: "current model", x: 140, y: 40, kind: "op" },
+          { id: "loss", label: "∂L/∂F", sub: "loss gradient", x: 260, y: 40, kind: "loss" },
+          { id: "res", label: "rᵢ", sub: "pseudo-residuals", x: 330, y: 112, kind: "op" },
+          { id: "tree", label: "tree hₘ", sub: "fit to rᵢ", x: 214, y: 112, kind: "op" },
+          { id: "shrink", label: "× ν", sub: "shrinkage", x: 110, y: 112, w: 64, kind: "param" },
+          { id: "out", label: "F_M(x)", sub: "prediction", x: 210, y: 168, kind: "out" },
+        ],
+        edges: [{ from: "f0", to: "F" }, { from: "F", to: "loss" }, { from: "loss", to: "res" }, { from: "res", to: "tree" }, { from: "tree", to: "shrink" }, { from: "shrink", to: "F", label: "add", dash: true }, { from: "F", to: "out", bend: -40 }],
+      },
+      phases: { init: { label: "init", color: 3 }, resid: { label: "residuals", color: 1 }, fit: { label: "fit tree", color: 6 }, add: { label: "add tree", color: 0 }, done: { label: "done", color: 2 } },
+      charts: [{ id: "mse", title: "train vs test MSE", series: [{ key: "train", label: "train", color: "var(--series-1)" }, { key: "test", label: "test", color: "var(--series-2)", dash: "4 3" }], logY: true }],
+      onFrame: render, onData: () => { lab.points.forEach((p, i) => (p.test = i % 4 === 3)); retrain(); },
     });
-    document.getElementById("gbm-depth").addEventListener("input", render);
-    document.getElementById("gbm-lr").addEventListener("input", render);
-
-    F0 = MLU.mean(points.map((p) => p.y));
-    render();
-    return () => {};
+    lab.editable({ newPoint: (x, y) => ({ x, y, test: false }), onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const rp = Lab.plane(lab.R("res"), { h: 190, yd: [-6, 6], xLabel: "x", yLabel: "r" });
+    const params = () => ({ depth: lab.val("depth"), lr: lab.val("lr"), rounds: lab.val("M"), loss: lab.val("loss") });
+    function retrain({ at = "start" } = {}) { lab.load(buildFrames(lab.points, params()), { at, play: at === "start" }); }
+    const fPath = L.mid.append("path").attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2.6);
+    const fPrev = L.mid.append("path").attr("fill", "none").attr("stroke", "var(--text-faint)").attr("stroke-width", 1.4).attr("stroke-dasharray", "4 4");
+    const hPath = rp.layers.mid.append("path").attr("fill", "none").attr("stroke", "var(--series-7)").attr("stroke-width", 2.6);
+    const xs = d3.range(-10, 10.001, 0.05);
+    const line = (P, f) => d3.line().x((x) => P.x(x)).y((x) => P.y(Math.max(-12, Math.min(12, f(x)))))(xs);
+    function render(f) {
+      const st = f.st, lr = lab.val("lr");
+      const FN = (trees) => (x) => st.F0 + trees.reduce((s, t) => s + lr * predT(t, x), 0);
+      const cur = FN(st.trees);
+      fPath.attr("d", line(pl, cur));
+      fPrev.attr("d", st.prevN != null ? line(pl, FN(st.trees.slice(0, st.prevN))) : null);
+      const train = lab.points.filter((p) => !p.test);
+      const sticks = L.links.selectAll("line").data(st.showR ? train : []);
+      sticks.exit().remove();
+      sticks.enter().append("line").merge(sticks).attr("x1", (d) => pl.x(d.x)).attr("x2", (d) => pl.x(d.x)).attr("y1", (d) => pl.y(d.y)).attr("y2", (d) => pl.y(cur(d.x))).attr("stroke", "var(--series-2)").attr("stroke-opacity", 0.7);
+      lab.drawPoints({ color: (d) => (d.test ? "transparent" : "var(--series-1)"), stroke: (d) => (d.test ? "var(--text-faint)" : "var(--bg)"), sw: (d) => (d.test ? 1.6 : 1.1) });
+      // residual panel
+      const rr = st.r || train.map((p) => p.y - cur(p.x));
+      const rd = rp.layers.pts.selectAll("circle").data(train.map((p, i) => ({ x: p.x, r: rr[i] })));
+      rd.exit().remove();
+      rd.enter().append("circle").attr("r", 3.6).merge(rd).attr("cx", (d) => rp.x(d.x)).attr("cy", (d) => rp.y(Math.max(-6, Math.min(6, d.r)))).attr("fill", "var(--series-2)").attr("opacity", st.r ? 0.9 : 0.35);
+      hPath.attr("d", st.h ? d3.line().curve(d3.curveStepAfter).x((x) => rp.x(x)).y((x) => rp.y(Math.max(-6, Math.min(6, predT(st.h, x)))))(xs) : null);
+      const mtr = f.m && f.m.train, mte = f.m && f.m.test;
+      lab.readout(`<div class="kv"><span>trees</span><b>${st.trees.length}</b><span>train MSE</span><b>${fmt(mtr)}</b><span>test MSE</span><b>${fmt(mte)}</b><span>F₀</span><b>${fmt(st.F0, 2)}</b></div>`);
+    }
+    lab.watch(["depth", "lr", "M", "loss"], () => retrain());
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("sine");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "gbm",
     name: "Gradient Boosting Trees",
     category: "Supervised - Trees & Ensembles",
-    tagline: "stagewise residual fitting",
-    description: "Builds an ensemble one shallow regression tree at a time, each fit to the previous ensemble's residuals and shrunk in by a learning rate. Step through boosting rounds to watch the fit tighten.",
+    tagline: "stagewise residual fitting, train vs test",
+    description: "Gradient descent in function space: compute pseudo-residuals, fit a small tree to them, add a shrunken copy, repeat. A held-out test set shows exactly when more trees start to overfit.",
     info: {
       type: "Supervised - Regression (classification variants swap in a different loss). Additive ensemble, sequential (stagewise) boosting.",
       scenario: "High predictive accuracy on tabular data when you can trade some interpretability and training time for it - the idea behind XGBoost/LightGBM.",

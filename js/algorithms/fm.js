@@ -1,170 +1,122 @@
 (() => {
-  const NU = 6, NI = 6, K = 2;
-  const W2 = 460, H2 = 300, PAD = 34;
+  const { ui, col, fmt } = Lab;
+  const NU = 8, NI = 8;
+  const USERS = ["Ana", "Ben", "Cai", "Dev", "Eli", "Fay", "Gus", "Hui"];
+  const ITEMS = ["Alien", "Brave", "Coco", "Dune", "Elf", "Frozen", "Gravity", "Heat"];
 
-  function initParams() {
-    return {
-      w0: 0,
-      wu: new Array(NU).fill(0),
-      wi: new Array(NI).fill(0),
-      vu: Array.from({ length: NU }, () => Array.from({ length: K }, () => MLU.randn() * 0.3)),
-      vi: Array.from({ length: NI }, () => Array.from({ length: K }, () => MLU.randn() * 0.3)),
-    };
-  }
-  function predict(p, u, i) {
-    let dot = 0; for (let f = 0; f < K; f++) dot += p.vu[u][f] * p.vi[i][f];
-    return p.w0 + p.wu[u] + p.wi[i] + dot;
-  }
-  function trainEpochs(p, ratings, epochs, lr, reg) {
-    const entries = [];
-    for (let u = 0; u < NU; u++) for (let i = 0; i < NI; i++) if (ratings[u][i] != null) entries.push([u, i, ratings[u][i]]);
-    for (let e = 0; e < epochs; e++) {
-      const order = MLU.shuffle(entries);
-      for (const [u, i, r] of order) {
-        const pred = predict(p, u, i);
-        const err = pred - r;
-        p.w0 -= lr * err;
-        p.wu[u] -= lr * (err + reg * p.wu[u]);
-        p.wi[i] -= lr * (err + reg * p.wi[i]);
-        for (let f = 0; f < K; f++) {
-          const vu = p.vu[u][f], vi = p.vi[i][f];
-          p.vu[u][f] -= lr * (err * vi + reg * vu);
-          p.vi[i][f] -= lr * (err * vu + reg * vi);
-        }
-      }
+  function makeData(kind) {
+    MLU.seedRng(kind === "two" ? 5 : kind === "three" ? 9 : 2);
+    const R = Array.from({ length: NU }, () => new Array(NI).fill(null));
+    const split = Array.from({ length: NU }, () => new Array(NI).fill(null));
+    let U, V;
+    if (kind === "two") { U = USERS.map((_, i) => (i % 2 ? [1, -0.2] : [-1, 0.2]).map((v) => v + MLU.randn() * 0.2)); V = ITEMS.map((_, j) => (j < 4 ? [1, 0] : [-1, 0]).map((v) => v + MLU.randn() * 0.25)); }
+    else if (kind === "three") { const g = [[1, 0], [-0.5, 0.87], [-0.5, -0.87]]; U = USERS.map((_, i) => g[i % 3].map((v) => v + MLU.randn() * 0.2)); V = ITEMS.map((_, j) => g[j % 3].map((v) => v + MLU.randn() * 0.2)); }
+    else { U = USERS.map(() => [MLU.randn() * 0.1, MLU.randn() * 0.1]); V = ITEMS.map(() => [MLU.randn() * 0.1, MLU.randn() * 0.1]); }
+    for (let u = 0; u < NU; u++) for (let i = 0; i < NI; i++) {
+      const raw = 3 + 1.6 * (U[u][0] * V[i][0] + U[u][1] * V[i][1]) + (kind === "random" ? MLU.randn() * 1.3 : MLU.randn() * 0.35);
+      const r = Math.max(1, Math.min(5, Math.round(raw)));
+      const z = MLU.rng();
+      if (z < 0.6) { R[u][i] = r; split[u][i] = "train"; } else if (z < 0.78) { R[u][i] = r; split[u][i] = "test"; }
     }
-    let sse = 0; for (const [u, i, r] of entries) sse += (predict(p, u, i) - r) ** 2;
-    return entries.length ? Math.sqrt(sse / entries.length) : null;
+    return { R, split };
+  }
+
+  function train(D, P) {
+    MLU.seedRng(17);
+    const k = P.k;
+    const p = { w0: 0, wu: new Array(NU).fill(0), wi: new Array(NI).fill(0), vu: Array.from({ length: NU }, () => Array.from({ length: k }, () => MLU.randn() * 0.1)), vi: Array.from({ length: NI }, () => Array.from({ length: k }, () => MLU.randn() * 0.1)) };
+    const entries = [], tests = [];
+    for (let u = 0; u < NU; u++) for (let i = 0; i < NI; i++) if (D.R[u][i] != null) (D.split[u][i] === "train" ? entries : tests).push([u, i, D.R[u][i]]);
+    const pred = (u, i) => p.w0 + p.wu[u] + p.wi[i] + p.vu[u].reduce((s, v, f) => s + v * p.vi[i][f], 0);
+    const rmse = (set) => (set.length ? Math.sqrt(MLU.mean(set.map(([u, i, r]) => (pred(u, i) - r) ** 2))) : null);
+    p.w0 = entries.length ? MLU.mean(entries.map((e) => e[2])) : 3;
+    const snap = () => ({ w0: p.w0, wu: p.wu.slice(), wi: p.wi.slice(), vu: p.vu.map((v) => v.slice()), vi: p.vi.map((v) => v.slice()) });
+    const frames = [{ phase: "init", major: true, arch: ["x", "lin", "pair"], title: `Start: global mean ${p.w0.toFixed(2)}, tiny random latent vectors`, text: "Each user and each item gets a bias and a k-dimensional latent vector. The model predicts a rating as the global mean plus both biases plus the dot product of the two vectors: users and items that point the same way get high ratings.", tex: "\\hat y(x)=w_0+\\sum_i w_ix_i+\\sum_{i<j}\\langle v_i,v_j\\rangle x_ix_j\\;\\overset{\\text{one-hot}}{=}\\;w_0+w_u+w_i+\\langle v_u,v_i\\rangle", st: snap(), m: { train: rmse(entries), test: rmse(tests) } }];
+    const keep = new Set(Lab.checkpoints(P.epochs, 60));
+    for (let e = 1; e <= P.epochs; e++) {
+      for (const [u, i, r] of MLU.shuffle(entries)) {
+        const err = pred(u, i) - r;
+        p.w0 -= P.lr * err;
+        p.wu[u] -= P.lr * (err + P.reg * p.wu[u]);
+        p.wi[i] -= P.lr * (err + P.reg * p.wi[i]);
+        for (let f = 0; f < k; f++) { const a = p.vu[u][f], b = p.vi[i][f]; p.vu[u][f] -= P.lr * (err * b + P.reg * a); p.vi[i][f] -= P.lr * (err * a + P.reg * b); }
+      }
+      if (keep.has(e)) frames.push({ phase: "sgd", major: e === 1, arch: ["pair", "loss", "sgd"], title: `Epoch ${e}`, text: `Train RMSE <b>${rmse(entries).toFixed(3)}</b>, held-out RMSE <b>${(rmse(tests) ?? 0).toFixed(3)}</b>. One SGD pass over the observed ratings. In the latent map, users drift toward the items they rate highly and away from those they dislike.`, tex: "v_u\\leftarrow v_u-\\eta\\big[(\\hat y-y)\\,v_i+\\lambda v_u\\big],\\qquad v_i\\leftarrow v_i-\\eta\\big[(\\hat y-y)\\,v_u+\\lambda v_i\\big]", st: snap(), m: { train: rmse(entries), test: rmse(tests) } });
+    }
+    frames.push({ ...frames[frames.length - 1], phase: "done", major: true, arch: ["out"], title: "Fill in the blanks", text: "Every empty cell now has a predicted rating (faded numbers): that is the recommendation. The general FM handles any extra features (time, device, item genre) the same way, with pairwise interactions computed in O(k·n) using the identity below.", tex: "\\sum_{i<j}\\langle v_i,v_j\\rangle x_ix_j=\\tfrac12\\sum_{f=1}^{k}\\Big[\\Big(\\sum_i v_{if}x_i\\Big)^2-\\sum_i v_{if}^2x_i^2\\Big]" });
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">click a cell to set the rating shown below, right-click to clear it</span></div>
-            <div class="btn-row"><button id="fm-train" class="primary">train 500 epochs</button><button id="fm-reset">reset model</button><button id="fm-randdata">random ratings</button></div>
-          </div>
-          <div style="padding:8px 4px">
-            <div class="stage-hint" style="margin-bottom:6px">user × item rating matrix (bold = observed, faded = FM prediction)</div>
-            <div class="hscroll"><table id="fm-table" style="border-collapse:collapse;font-size:12px"></table></div>
-          </div>
-          <div style="padding:8px 4px;flex:1">
-            <div class="stage-hint" style="margin-bottom:6px">learned latent space (each user/item is a 2D vector v - dot products of nearby vectors drive high predicted ratings)</div>
-            <svg id="fm-latent" viewBox="0 0 ${W2} ${H2}" style="width:100%;height:${H2}px"></svg>
-          </div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>rating to paint</h3>
-            <div class="btn-row" id="fm-rating-buttons">${[1, 2, 3, 4, 5].map((r) => `<button data-r="${r}">${r}</button>`).join("")}</div>
-          </div>
-          <div class="control-card">
-            <h3>hyperparameters</h3>
-            <div class="field"><label>learning rate <span class="val" id="fm-lr-val">0.05</span></label>
-              <input type="range" id="fm-lr" min="1" max="20" step="1" value="10" /></div>
-            <div class="field"><label>L2 regularization <span class="val" id="fm-reg-val">0.02</span></label>
-              <input type="range" id="fm-reg" min="0" max="20" step="1" value="4" /></div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="fm-readout">–</div>
-            <div class="note">Factorization Machine with only user/item one-hot features reduces to biased matrix factorization: prediction = w<sub>0</sub> + w<sub>u</sub> + w<sub>i</sub> + &lang;v<sub>u</sub>,v<sub>i</sub>&rang;, trained by SGD - the pairwise-interaction term, here with a 2D latent space so it's directly plottable.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    let ratings = Array.from({ length: NU }, () => new Array(NI).fill(null));
-    function seedRatings() {
-      const density = 0.4;
-      for (let u = 0; u < NU; u++) for (let i = 0; i < NI; i++) ratings[u][i] = MLU.rng() < density ? MLU.randInt(5) + 1 : null;
-    }
-    seedRatings();
-    let params = initParams();
-    let currentRating = 5;
-    let lastRmse = null;
-
-    function lr() { return +document.getElementById("fm-lr").value / 200; }
-    function reg() { return +document.getElementById("fm-reg").value / 200; }
-
-    function renderTable() {
-      const table = document.getElementById("fm-table");
-      table.innerHTML = "";
-      const header = document.createElement("tr");
-      header.appendChild(document.createElement("td"));
-      for (let i = 0; i < NI; i++) { const td = document.createElement("td"); td.textContent = "item " + i; td.style.cssText = "padding:4px 8px;color:var(--text-faint)"; header.appendChild(td); }
-      table.appendChild(header);
-      for (let u = 0; u < NU; u++) {
-        const row = document.createElement("tr");
-        const label = document.createElement("td"); label.textContent = "user " + u; label.style.cssText = "padding:4px 8px;color:var(--text-faint)"; row.appendChild(label);
-        for (let i = 0; i < NI; i++) {
-          const td = document.createElement("td");
-          const known = ratings[u][i] != null;
-          const val = known ? ratings[u][i] : predict(params, u, i);
-          td.textContent = val.toFixed(known ? 0 : 2);
-          td.style.cssText = `padding:6px 10px;text-align:center;border:1px solid var(--border);cursor:pointer;background:${known ? "var(--bg-inset)" : "transparent"};color:${known ? "var(--text)" : "var(--text-faint)"};font-weight:${known ? "700" : "400"};`;
-          td.addEventListener("click", () => { ratings[u][i] = currentRating; renderTable(); });
-          td.addEventListener("contextmenu", (e) => { e.preventDefault(); ratings[u][i] = null; renderTable(); });
-          row.appendChild(td);
-        }
-        table.appendChild(row);
-      }
-    }
-
-    const svg = d3.select("#fm-latent");
-    function renderLatent() {
-      const all = [...params.vu, ...params.vi].flat();
-      const ext = Math.max(0.5, ...all.map(Math.abs)) * 1.3;
-      const x = d3.scaleLinear().domain([-ext, ext]).range([PAD, W2 - PAD]);
-      const y = d3.scaleLinear().domain([-ext, ext]).range([H2 - PAD, PAD]);
-      svg.selectAll("*").remove();
-      svg.append("rect").attr("x", PAD).attr("y", PAD).attr("width", W2 - 2 * PAD).attr("height", H2 - 2 * PAD).attr("fill", "none").attr("stroke", "var(--border-soft)");
-      const uData = params.vu.map((v, i) => ({ x: v[0], y: v[1], label: "u" + i }));
-      const iData = params.vi.map((v, i) => ({ x: v[0], y: v[1], label: "i" + i }));
-      const g1 = svg.append("g");
-      g1.selectAll("circle").data(uData).enter().append("circle").attr("r", 6).attr("fill", MLU.palette[0])
-        .attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y));
-      g1.selectAll("text").data(uData).enter().append("text").attr("x", (d) => x(d.x) + 8).attr("y", (d) => y(d.y) + 3)
-        .text((d) => d.label).attr("font-size", 10).attr("fill", "var(--text-dim)");
-      const g2 = svg.append("g");
-      g2.selectAll("rect.pt").data(iData).enter().append("rect").attr("class", "pt").attr("width", 9).attr("height", 9)
-        .attr("fill", MLU.palette[1]).attr("x", (d) => x(d.x) - 4.5).attr("y", (d) => y(d.y) - 4.5);
-      g2.selectAll("text").data(iData).enter().append("text").attr("x", (d) => x(d.x) + 8).attr("y", (d) => y(d.y) + 3)
-        .text((d) => d.label).attr("font-size", 10).attr("fill", "var(--text-dim)");
-    }
-
-    function renderAll() {
-      document.getElementById("fm-lr-val").textContent = lr().toFixed(3);
-      document.getElementById("fm-reg-val").textContent = reg().toFixed(3);
-      renderTable();
-      renderLatent();
-      document.getElementById("fm-readout").innerHTML = lastRmse != null
-        ? `train RMSE: <b class="num">${lastRmse.toFixed(3)}</b>`
-        : "click train to fit";
-    }
-
-    document.getElementById("fm-rating-buttons").addEventListener("click", (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
-      currentRating = +btn.dataset.r;
-      document.querySelectorAll("#fm-rating-buttons button").forEach((b) => b.classList.toggle("primary", +b.dataset.r === currentRating));
+    const lab = Lab.studio(root, {
+      id: "fm", fps: 6, plane: false,
+      stageHTML: `<div class="html-stage" style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:14px"><div><div class="sub-cap">ratings · bold = train · outlined = held-out test · faded = prediction · click to edit</div><div data-r="mat" class="hscroll"></div></div><div><div class="sub-cap">latent space (first two dimensions): ● users ■ items</div><svg data-r="lat" viewBox="0 0 340 300" class="arch-svg"></svg></div></div>`,
+      legend: ui.legend([["var(--series-1)", "high rating"], ["var(--series-2)", "low rating"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      side: [
+        { title: "data", html: ui.select("ds", "ratings", [["two", "two taste groups"], ["three", "three genres"], ["random", "random (no structure)"]], "two") + ui.range("paint", "rating to paint", 1, 5, 1, 5) },
+        { title: "model", html: ui.range("k", "latent dimensions k", 1, 4, 1, 2) + ui.range("lr", "learning rate η", 0.005, 0.1, 0.005, 0.03) + ui.range("reg", "regularisation λ", 0, 0.3, 0.01, 0.05) + ui.range("ep", "epochs", 20, 600, 20, 200) },
+      ],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "x", label: "x = [user | item]", sub: "one-hot features", x: 80, y: 40, kind: "data" },
+          { id: "lin", label: "w₀ + Σ wᵢxᵢ", sub: "biases", x: 80, y: 112, kind: "op" },
+          { id: "pair", label: "Σ ⟨vᵢ,vⱼ⟩xᵢxⱼ", sub: "pairwise, O(kn)", x: 230, y: 40, kind: "op" },
+          { id: "out", label: "ŷ", sub: "rating", x: 230, y: 112, w: 56, kind: "out" },
+          { id: "loss", label: "(ŷ − y)² + λ‖θ‖²", sub: "loss", x: 230, y: 170, kind: "loss" },
+          { id: "sgd", label: "SGD", sub: "per rating", x: 80, y: 170, w: 64, kind: "param" },
+        ],
+        edges: [{ from: "x", to: "lin" }, { from: "x", to: "pair" }, { from: "lin", to: "out" }, { from: "pair", to: "out" }, { from: "out", to: "loss" }, { from: "loss", to: "sgd" }, { from: "sgd", to: "lin", dash: true }],
+      },
+      phases: { init: { label: "init", color: 3 }, sgd: { label: "SGD epoch", color: 0 }, done: { label: "recommend", color: 2 } },
+      charts: [{ id: "rmse", title: "RMSE: train vs held-out", series: [{ key: "train", label: "train", color: "var(--series-1)" }, { key: "test", label: "held-out", color: "var(--series-2)", dash: "4 3" }] }],
+      onFrame: render,
     });
-    document.querySelector('#fm-rating-buttons button[data-r="5"]').classList.add("primary");
-    document.getElementById("fm-train").addEventListener("click", () => { lastRmse = trainEpochs(params, ratings, 500, lr(), reg()); renderAll(); });
-    document.getElementById("fm-reset").addEventListener("click", () => { params = initParams(); lastRmse = null; renderAll(); });
-    document.getElementById("fm-randdata").addEventListener("click", () => { seedRatings(); renderAll(); });
-    ["fm-lr", "fm-reg"].forEach((id) => document.getElementById(id).addEventListener("input", renderAll));
-
-    renderAll();
-    return () => {};
+    let D = makeData("two");
+    const P = () => ({ k: lab.val("k"), lr: lab.val("lr"), reg: lab.val("reg"), epochs: lab.val("ep") });
+    function retrain({ at = "start" } = {}) { lab.load(train(D, P()), { at, play: at === "start" }); }
+    const latSvg = d3.select(lab.R("lat"));
+    function render(f) {
+      const p = f.st, k = p.vu[0].length;
+      const pred = (u, i) => p.w0 + p.wu[u] + p.wi[i] + p.vu[u].reduce((s, v, q) => s + v * p.vi[i][q], 0);
+      const color = (r) => { const t = (Math.max(1, Math.min(5, r)) - 3) / 2; return t >= 0 ? `color-mix(in srgb, var(--series-1) ${Math.round(t * 70 + 8)}%, var(--bg-raised))` : `color-mix(in srgb, var(--series-2) ${Math.round(-t * 70 + 8)}%, var(--bg-raised))`; };
+      lab.R("mat").innerHTML = `<table class="mini-table" style="min-width:330px;text-align:center"><tr><th></th>${ITEMS.map((t) => `<th style="text-align:center">${t.slice(0, 5)}</th>`).join("")}</tr>${USERS.map((u, ui2) => `<tr><td style="color:var(--text-dim)">${u}</td>${ITEMS.map((_, i) => {
+        const r = D.R[ui2][i], sp = D.split[ui2][i], pr = pred(ui2, i);
+        const shown = sp === "train" ? r : pr;
+        return `<td data-c="${ui2},${i}" style="cursor:pointer;background:${color(shown)};${sp === "test" ? "outline:2px solid var(--series-4);outline-offset:-3px;" : ""}font-weight:${sp === "train" ? 700 : 400};color:${sp === "train" ? "var(--text)" : "var(--text-dim)"}" title="${sp === "train" ? "observed " + r : sp === "test" ? `held-out ${r}, predicted ${pr.toFixed(2)}` : "predicted " + pr.toFixed(2)}">${sp === "train" ? r : pr.toFixed(1)}</td>`;
+      }).join("")}</tr>`).join("")}</table>`;
+      lab.R("mat").querySelectorAll("td[data-c]").forEach((td) => td.onclick = () => {
+        const [u, i] = td.dataset.c.split(",").map(Number);
+        if (D.split[u][i] === "train" && D.R[u][i] === lab.val("paint")) { D.R[u][i] = null; D.split[u][i] = null; }
+        else { D.R[u][i] = lab.val("paint"); D.split[u][i] = "train"; }
+        retrain({ at: "end" });
+      });
+      // latent map
+      latSvg.selectAll("*").remove();
+      const all = p.vu.concat(p.vi).map((v) => [v[0], k > 1 ? v[1] : 0]);
+      const ext = Math.max(0.3, ...all.flat().map(Math.abs)) * 1.15;
+      const sx = d3.scaleLinear().domain([-ext, ext]).range([20, 320]), sy = d3.scaleLinear().domain([-ext, ext]).range([280, 20]);
+      latSvg.append("line").attr("x1", 20).attr("x2", 320).attr("y1", sy(0)).attr("y2", sy(0)).attr("stroke", "var(--border)").attr("stroke-dasharray", "3 3");
+      latSvg.append("line").attr("y1", 20).attr("y2", 280).attr("x1", sx(0)).attr("x2", sx(0)).attr("stroke", "var(--border)").attr("stroke-dasharray", "3 3");
+      p.vi.forEach((v, i) => { const x = sx(v[0]), y = sy(k > 1 ? v[1] : 0); latSvg.append("rect").attr("x", x - 5).attr("y", y - 5).attr("width", 10).attr("height", 10).attr("fill", col(4)).attr("rx", 2); latSvg.append("text").attr("x", x + 8).attr("y", y + 4).style("font-size", "9px").attr("fill", "var(--text-dim)").text(ITEMS[i]); });
+      p.vu.forEach((v, u) => { const x = sx(v[0]), y = sy(k > 1 ? v[1] : 0); latSvg.append("circle").attr("cx", x).attr("cy", y).attr("r", 5.5).attr("fill", col(6)); latSvg.append("text").attr("x", x + 8).attr("y", y + 4).style("font-size", "9px").attr("fill", "var(--text)").text(USERS[u]); });
+      const m = f.m || {};
+      lab.readout(`<div class="kv"><span>users × items</span><b>${NU} × ${NI}</b><span>parameters</span><b>${1 + NU + NI + (NU + NI) * k}</b><span>train RMSE</span><b>${fmt(m.train)}</b><span>held-out RMSE</span><b>${fmt(m.test)}</b></div>`);
+    }
+    lab.watch(["ds"], () => { D = makeData(lab.val("ds")); retrain(); });
+    lab.watch(["k", "lr", "reg", "ep"], () => retrain());
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    retrain();
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "factorization-machines",
     name: "Factorization Machines",
     category: "Supervised - Regression",
-    tagline: "latent-vector pairwise interactions",
-    description: "Predicts ratings in a sparse user×item matrix by learning a low-rank latent vector per user and item, so unseen pairs get a prediction from the dot product of their vectors. Edit the matrix and retrain to see the latent space reorganize.",
+    tagline: "latent-factor recommender, SGD",
+    description: "Pairwise feature interactions through learned latent vectors, shown as a recommender: watch user and item vectors move in latent space as SGD fits observed ratings, and the empty cells fill with predictions while held-out error tracks generalisation.",
     info: {
       type: "Supervised - Regression/ranking. Factorized second-order feature-interaction model.",
       scenario: "Sparse, high-cardinality categorical data (user IDs × item IDs, ad click prediction with many categorical fields) where you want pairwise feature interactions without an explosion of parameters - a generalization of matrix factorization.",

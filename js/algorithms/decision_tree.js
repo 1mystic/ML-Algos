@@ -1,183 +1,258 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-  const N_CLASSES = 3;
+  const { ui, col, fmt } = Lab;
+  const NC = 3;
+  const counts = (pts, idx) => { const c = new Array(NC).fill(0); for (const i of idx) c[pts[i].label]++; return c; };
+  const IMP = {
+    gini: (c, n) => (n ? 1 - c.reduce((s, v) => s + (v / n) ** 2, 0) : 0),
+    entropy: (c, n) => (n ? -c.reduce((s, v) => s + (v ? (v / n) * Math.log2(v / n) : 0), 0) : 0),
+  };
+  const argmax = (a) => a.indexOf(Math.max(...a));
 
-  function gini(labels) {
-    if (!labels.length) return 0;
-    const counts = {};
-    for (const l of labels) counts[l] = (counts[l] || 0) + 1;
-    let s = 0;
-    for (const c in counts) s += (counts[c] / labels.length) ** 2;
-    return 1 - s;
-  }
-  function majority(labels) {
-    const counts = {};
-    for (const l of labels) counts[l] = (counts[l] || 0) + 1;
-    return +Object.keys(counts).reduce((a, b) => (counts[a] > counts[b] ? a : b));
-  }
-  function buildTree(pts, depth, maxDepth) {
-    const labels = pts.map((p) => p.label);
-    if (depth >= maxDepth || pts.length < 4 || gini(labels) === 0) return { leaf: true, label: majority(labels) };
-    let best = null;
-    for (const feat of ["x", "y"]) {
-      const vals = [...new Set(pts.map((p) => p[feat]))].sort((a, b) => a - b);
-      for (let i = 0; i < vals.length - 1; i++) {
-        const thr = (vals[i] + vals[i + 1]) / 2;
-        const left = pts.filter((p) => p[feat] <= thr), right = pts.filter((p) => p[feat] > thr);
-        if (!left.length || !right.length) continue;
-        const g = (left.length * gini(left.map((p) => p.label)) + right.length * gini(right.map((p) => p.label))) / pts.length;
-        if (!best || g < best.g) best = { g, feat, thr, left, right };
+  // Best axis-aligned split of a node; also returns the impurity curve per feature.
+  function bestSplit(pts, idx, crit, feats, minLeaf) {
+    const n = idx.length, parent = IMP[crit](counts(pts, idx), n);
+    let best = null; const curves = {};
+    for (const f of feats) {
+      const sorted = idx.slice().sort((a, b) => pts[a][f] - pts[b][f]);
+      const left = new Array(NC).fill(0), right = counts(pts, idx);
+      curves[f] = [];
+      for (let k = 0; k < n - 1; k++) {
+        const l = pts[sorted[k]].label; left[l]++; right[l]--;
+        const v0 = pts[sorted[k]][f], v1 = pts[sorted[k + 1]][f];
+        if (v1 - v0 < 1e-9) continue;
+        const nl = k + 1, nr = n - nl;
+        const w = (nl * IMP[crit](left, nl) + nr * IMP[crit](right, nr)) / n;
+        const thr = (v0 + v1) / 2;
+        curves[f].push([thr, w]);
+        if (nl < minLeaf || nr < minLeaf) continue;
+        if (!best || w < best.w - 1e-12) best = { f, thr, w, gain: parent - w };
       }
     }
-    if (!best) return { leaf: true, label: majority(labels) };
-    return {
-      leaf: false, feat: best.feat, thr: best.thr,
-      left: buildTree(best.left, depth + 1, maxDepth),
-      right: buildTree(best.right, depth + 1, maxDepth),
-    };
+    return { best, curves, parent };
   }
-  function predictTree(node, p) {
-    if (node.leaf) return node.label;
-    return predictTree(p[node.feat] <= node.thr ? node.left : node.right, p);
+
+  function growTree(pts, idx, { maxDepth, minLeaf, crit, featPick }) {
+    const nodes = [];
+    const root = { id: 0, depth: 0, idx, bounds: [-10, 10, -10, 10] };
+    nodes.push(root);
+    const queue = [root];
+    let order = 0;
+    while (queue.length) {
+      const nd = queue.shift();
+      nd.counts = counts(pts, nd.idx);
+      nd.n = nd.idx.length;
+      nd.imp = IMP[crit](nd.counts, nd.n);
+      nd.cls = argmax(nd.counts);
+      if (nd.depth >= maxDepth || nd.n < 2 * minLeaf || nd.imp < 1e-12) { nd.leaf = true; continue; }
+      const sp = bestSplit(pts, nd.idx, crit, featPick(), minLeaf);
+      if (!sp.best || sp.best.gain <= 1e-12) { nd.leaf = true; continue; }
+      Object.assign(nd, { f: sp.best.f, thr: sp.best.thr, gain: sp.best.gain, curves: sp.curves, order: order++ });
+      const [x0, x1, y0, y1] = nd.bounds;
+      const L = { id: nodes.length, depth: nd.depth + 1, parent: nd.id, idx: nd.idx.filter((i) => pts[i][nd.f] <= nd.thr), bounds: nd.f === "x" ? [x0, nd.thr, y0, y1] : [x0, x1, y0, nd.thr] };
+      nodes.push(L);
+      const R = { id: nodes.length, depth: nd.depth + 1, parent: nd.id, idx: nd.idx.filter((i) => pts[i][nd.f] > nd.thr), bounds: nd.f === "x" ? [nd.thr, x1, y0, y1] : [x0, x1, nd.thr, y1] };
+      nodes.push(R);
+      nd.left = L.id; nd.right = R.id;
+      queue.push(L, R);
+    }
+    return nodes;
   }
-  function bootstrapSample(pts) {
-    return Array.from({ length: pts.length }, () => pts[MLU.randInt(pts.length)]);
+  // Predict with only the first `s` splits applied (for animation).
+  function leafOf(nodes, p, s = Infinity) {
+    let nd = nodes[0];
+    while (nd.order != null && nd.order < s) nd = nodes[p[nd.f] <= nd.thr ? nd.left : nd.right];
+    return nd;
   }
+
+  function treeFrames(pts, P) {
+    const nodes = growTree(pts, pts.map((_, i) => i), { ...P, featPick: () => ["x", "y"] });
+    const splits = nodes.filter((n) => n.order != null).sort((a, b) => a.order - b.order);
+    const frames = [{ phase: "root", major: true, arch: ["data", "node"], title: `Root: all ${pts.length} points, ${P.crit} = ${nodes[0].imp.toFixed(3)}`, text: "A tree starts with every point in one region and predicts the majority class. Impurity measures how mixed the region is: 0 means pure.", tex: P.crit === "gini" ? "G=1-\\sum_k p_k^2" : "H=-\\sum_k p_k\\log_2 p_k", st: { s: 0, nodes, cur: 0 }, m: { acc: acc(nodes, pts, 0) } }];
+    splits.forEach((nd, k) => {
+      if (P.scan && k < 3) {
+        const curve = nd.curves[nd.f];
+        const picks = [0.15, 0.4, 0.65, 0.9].map((q) => curve[Math.floor(q * (curve.length - 1))]).filter(Boolean);
+        for (const c of picks) frames.push({ phase: "scan", arch: ["node", "scan"], title: `Scanning thresholds on ${nd.f} for node ${nd.id}`, text: `Candidate ${nd.f} ≤ ${c[0].toFixed(2)} gives weighted child impurity <b>${c[1].toFixed(3)}</b>. Every midpoint between sorted values is tried, on every feature.`, tex: "\\text{score}(t)=\\tfrac{n_L}{n}\\,I(L)+\\tfrac{n_R}{n}\\,I(R)", st: { s: k, nodes, cur: nd.id, cand: { f: nd.f, thr: c[0] } }, m: { acc: acc(nodes, pts, k) } });
+      }
+      frames.push({
+        phase: "split", major: k === 0, arch: ["scan", "split", "rec"],
+        title: `Split ${k + 1}: ${nd.f} ≤ ${nd.thr.toFixed(2)} (depth ${nd.depth})`,
+        text: `Best of all candidates: impurity drops from ${nd.imp.toFixed(3)} to ${(nd.imp - nd.gain).toFixed(3)} (gain <b>${nd.gain.toFixed(3)}</b>). The region is cut in two and each child is handled recursively.`,
+        tex: "\\Delta I = I(\\text{parent})-\\Big(\\tfrac{n_L}{n}I(L)+\\tfrac{n_R}{n}I(R)\\Big)",
+        st: { s: k + 1, nodes, cur: nd.id }, m: { acc: acc(nodes, pts, k + 1) },
+      });
+    });
+    const leaves = nodes.filter((n) => n.leaf).length;
+    frames.push({ phase: "done", major: true, arch: ["leaf", "out"], title: `Tree complete: ${splits.length} splits, ${leaves} leaves`, text: `Each leaf predicts its majority class. Training accuracy <b>${(acc(nodes, pts, Infinity) * 100).toFixed(1)}%</b>. Deep trees carve tiny boxes around individual points: that is overfitting, which is what forests fix.`, st: { s: Infinity, nodes, cur: null }, m: { acc: acc(nodes, pts, Infinity) } });
+    return frames;
+  }
+  function acc(nodes, pts, s) { return pts.length ? pts.filter((p) => leafOf(nodes, p, s).cls === p.label).length / pts.length : 0; }
+
+  function forestFrames(pts, P) {
+    const n = pts.length, trees = [], inBag = [];
+    const frames = [];
+    const votes = pts.map(() => new Array(NC).fill(0));
+    for (let t = 0; t < P.nTrees; t++) {
+      const idx = Array.from({ length: n }, () => MLU.randInt(n));
+      const bag = new Set(idx);
+      const nodes = growTree(pts, idx, { ...P, featPick: () => (P.mf === "one" ? [MLU.rng() < 0.5 ? "x" : "y"] : ["x", "y"]) });
+      trees.push(nodes); inBag.push(bag);
+      // out-of-bag error using trees that did not see each point
+      for (let i = 0; i < n; i++) if (!bag.has(i)) votes[i][leafOf(nodes, pts[i]).cls]++;
+      let oobN = 0, oobOk = 0;
+      for (let i = 0; i < n; i++) if (votes[i].some((v) => v)) { oobN++; if (argmax(votes[i]) === pts[i].label) oobOk++; }
+      const mult = new Array(n).fill(0); idx.forEach((i) => mult[i]++);
+      frames.push({
+        phase: t === 0 ? "bag" : "tree", major: t === 0, arch: t === 0 ? ["data", "boot", "tree1"] : ["boot", "tree1", "vote"],
+        title: `Tree ${t + 1} of ${P.nTrees}: bootstrap sample, ${n - bag.size} points out-of-bag`,
+        text: `Each tree trains on n draws <i>with replacement</i> (big dots = drawn several times, faded = left out). ${P.mf === "one" ? "Each split also only sees one randomly chosen feature, " : ""}which decorrelates the trees. The field shows the majority vote of all ${t + 1} trees. OOB error: <b>${oobN ? ((1 - oobOk / oobN) * 100).toFixed(1) + "%" : "–"}</b>.`,
+        tex: "\\hat y(x)=\\operatorname{mode}\\{\\,h_1(x),\\dots,h_T(x)\\,\\}",
+        st: { forest: true, T: t + 1, trees, mult, last: nodes }, m: { oob: oobN ? 1 - oobOk / oobN : null, acc: forestAcc(trees.slice(0, t + 1), pts) },
+      });
+    }
+    frames.push({ ...frames[frames.length - 1], phase: "done", major: true, arch: ["vote", "out"], title: `Forest of ${P.nTrees} trees`, text: "Averaging many high-variance, decorrelated trees keeps their low bias while cancelling much of their variance: the boundary is smoother and the OOB error (a free validation estimate) settles." });
+    return frames;
+  }
+  function forestVote(trees, p) { const v = new Array(NC).fill(0); for (const t of trees) v[leafOf(t, p).cls]++; return v; }
+  function forestAcc(trees, pts) { return pts.filter((p) => argmax(forestVote(trees, p)) === p.label).length / Math.max(1, pts.length); }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">${[0, 1, 2].map((i) => `<span class="legend-item"><span class="swatch" style="background:${MLU.palette[i]}"></span>class ${i}</span>`).join("")}</div>
-            <div class="btn-row"><button id="dt-regen">regenerate data</button><button id="dt-clear">clear</button></div>
-          </div>
-          <svg id="dt-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">pick a class, click to add points · boundary is rebuilt after every change</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>add points as</h3>
-            <div class="btn-row" id="dt-class-buttons">
-              ${[0, 1, 2].map((i) => `<button data-c="${i}" style="border-color:${MLU.palette[i]}">${i}</button>`).join("")}
-            </div>
-          </div>
-          <div class="control-card">
-            <h3>model</h3>
-            <div class="field"><label>mode</label>
-              <select id="dt-mode"><option value="tree">single decision tree</option><option value="forest">random forest (bagging)</option></select>
-            </div>
-            <div class="field"><label>max depth <span class="val" id="dt-depth-val">4</span></label>
-              <input type="range" id="dt-depth" min="1" max="10" step="1" value="4" /></div>
-            <div class="field" id="dt-nest-field" style="display:none"><label>trees (n_estimators) <span class="val" id="dt-nest-val">15</span></label>
-              <input type="range" id="dt-nest" min="3" max="40" step="1" value="15" /></div>
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="dt-readout">–</div>
-            <div class="note" id="dt-note">Recursive Gini-impurity splitting on axis-aligned thresholds.</div>
-          </div>
-        </div>
-      </div>
-    `;
+    const lab = Lab.studio(root, {
+      id: "dt", fps: 2.5, classes: NC,
+      legend: ui.legend([["var(--series-4)", "node being split", "ring"], ["var(--text)", "split line", "line"]]),
+      tools: `<div class="seg" data-r="mode"><button data-m="tree" class="on">decision tree</button><button data-m="forest">random forest</button></div>` + ui.btn("retrain", "retrain", true),
+      hint: "click adds the selected class · drag / double-click to edit",
+      data: { kind: "class", presets: ["blobs3", "moons", "xor", "circles", "spiral", "overlap"], def: "blobs3", n: 90, noise: 0.35 },
+      side: [
+        { title: "tree", html: ui.range("depth", "max depth", 1, 10, 1, 4) + ui.range("leaf", "min samples per leaf", 1, 15, 1, 2) + ui.select("crit", "criterion", [["gini", "Gini impurity"], ["entropy", "entropy (information gain)"]], "gini") + ui.check("scan", "animate threshold scan", true) },
+        { title: "forest", id: "forest", html: ui.range("nt", "trees", 2, 60, 1, 25) + ui.select("mf", "features per split", [["one", "1 random (max_features = 1)"], ["all", "both (bagging only)"]], "one") },
+      ],
+      arch: {
+        w: 380, h: 200,
+        nodes: [
+          { id: "data", label: "data", sub: "(X, y)", x: 40, y: 40, w: 56, kind: "data" },
+          { id: "boot", label: "bootstrap", sub: "forest only", x: 44, y: 150, kind: "param" },
+          { id: "node", label: "node", sub: "region + points", x: 132, y: 40, kind: "op" },
+          { id: "scan", label: "scan splits", sub: "features × thresholds", x: 254, y: 40, kind: "loss" },
+          { id: "split", label: "best split", sub: "max impurity drop", x: 322, y: 100, kind: "op" },
+          { id: "rec", label: "recurse", sub: "children", x: 214, y: 100, kind: "op" },
+          { id: "leaf", label: "leaf", sub: "majority class", x: 116, y: 100, kind: "out" },
+          { id: "tree1", label: "tree hₜ", sub: "fully grown", x: 152, y: 162, kind: "op" },
+          { id: "vote", label: "vote", sub: "mode of T trees", x: 262, y: 162, kind: "op" },
+          { id: "out", label: "ŷ", x: 346, y: 162, w: 44, kind: "out" },
+        ],
+        edges: [{ from: "data", to: "node" }, { from: "node", to: "scan" }, { from: "scan", to: "split" }, { from: "split", to: "rec" }, { from: "rec", to: "node", dash: true }, { from: "rec", to: "leaf", label: "stop" }, { from: "data", to: "boot" }, { from: "boot", to: "tree1" }, { from: "tree1", to: "vote" }, { from: "vote", to: "out" }, { from: "leaf", to: "out", bend: 30 }],
+      },
+      phases: { root: { label: "root", color: 3 }, scan: { label: "threshold scan", color: 4 }, split: { label: "split", color: 0 }, bag: { label: "bootstrap", color: 3 }, tree: { label: "add tree", color: 0 }, done: { label: "done", color: 2 } },
+      panels: [{ id: "tree", title: "tree structure", sub: "colour = majority class · current node outlined", wide: true }, { id: "curve", title: "impurity vs threshold at this node" }],
+      charts: [{ id: "acc", title: "accuracy", series: [{ key: "acc", label: "train acc", color: "var(--series-3)" }, { key: "oob", label: "OOB error", color: "var(--series-2)", dash: "4 3" }] }],
+      onFrame: render, onData: () => retrain(),
+    });
+    lab.editable({ onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    let mode = "tree";
+    const params = () => ({ maxDepth: lab.val("depth"), minLeaf: lab.val("leaf"), crit: lab.val("crit"), scan: lab.val("scan"), nTrees: lab.val("nt"), mf: lab.val("mf") });
+    function retrain({ at = "start" } = {}) {
+      lab.q('[data-side="forest"]').style.opacity = mode === "forest" ? 1 : 0.45;
+      if (lab.points.length < 2) { lab.load([{ phase: "root", title: "Add some points", text: "", st: { s: 0, nodes: null } }]); return; }
+      MLU.seedRng(17);
+      lab.load(mode === "tree" ? treeFrames(lab.points, params()) : forestFrames(lab.points, params()), { at, play: at === "start" });
+    }
+    lab.R("mode").onclick = (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      mode = b.dataset.m;
+      lab.R("mode").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+      retrain();
+    };
+    const splitG = L.mid.append("g"), regionG = L.mid.append("g");
+    const treeEl = lab.R("panel-tree"), curveEl = lab.R("panel-curve");
 
-    const svg = d3.select("#dt-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    let points = MLU.makeBlobs({ n: 70, clusters: 3 }).map((p) => ({ x: p.x, y: p.y, label: p.label }));
-    let currentClass = 0;
-    const bgG = svg.append("g");
-    const ptsG = svg.append("g");
-
-    function depth() { return +document.getElementById("dt-depth").value; }
-    function nest() { return +document.getElementById("dt-nest").value; }
-    function mode() { return document.getElementById("dt-mode").value; }
-
-    function render() {
-      document.getElementById("dt-depth-val").textContent = depth();
-      document.getElementById("dt-nest-val").textContent = nest();
-      document.getElementById("dt-nest-field").style.display = mode() === "forest" ? "" : "none";
-      document.getElementById("dt-note").innerHTML = mode() === "forest"
-        ? "Bagging: each tree trains on a bootstrap resample of the points; the boundary shown is the ensemble's majority vote."
-        : "Recursive Gini-impurity splitting on axis-aligned thresholds.";
-
-      let trees = [];
-      if (points.length >= 4) {
-        if (mode() === "forest") {
-          for (let i = 0; i < nest(); i++) trees.push(buildTree(bootstrapSample(points), 0, depth()));
-        } else {
-          trees = [buildTree(points, 0, depth())];
-        }
-      }
-      function predict(p) {
-        if (!trees.length) return -1;
-        const votes = new Array(N_CLASSES).fill(0);
-        for (const t of trees) votes[predictTree(t, p)]++;
-        let best = 0; for (let i = 1; i < N_CLASSES; i++) if (votes[i] > votes[best]) best = i;
-        return best;
-      }
-
-      const cell = 12, cells = [];
-      for (let px = PAD; px < W - PAD; px += cell)
-        for (let py = PAD; py < H - PAD; py += cell) {
-          const xv = x.invert(px + cell / 2), yv = y.invert(py + cell / 2);
-          cells.push({ px, py, label: predict({ x: xv, y: yv }) });
-        }
-      const rects = bgG.selectAll("rect").data(cells);
-      rects.enter().append("rect").attr("width", cell).attr("height", cell)
-        .merge(rects).attr("x", (d) => d.px).attr("y", (d) => d.py)
-        .attr("fill", (d) => (d.label >= 0 ? MLU.palette[d.label] : "transparent")).attr("opacity", 0.16);
-      rects.exit().remove();
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y)).attr("fill", (d) => MLU.palette[d.label])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
-
-      let correct = 0;
-      for (const p of points) if (predict(p) === p.label) correct++;
-      document.getElementById("dt-readout").innerHTML =
-        `points: <b>${points.length}</b><br>trees: <b>${trees.length}</b><br>train accuracy: <b class="num">${points.length ? ((correct / points.length) * 100).toFixed(1) : "–"}%</b>`;
+    function drawTree(nodes, s, cur) {
+      treeEl.innerHTML = "";
+      if (!nodes) return;
+      const vis = (nd) => nd.parent == null || (nodes[nd.parent].order != null && nodes[nd.parent].order < s);
+      const build = (nd) => ({ nd, children: nd.order != null && nd.order < s ? [build(nodes[nd.left]), build(nodes[nd.right])] : [] });
+      const h = d3.hierarchy(build(nodes[0]), (d) => d.children);
+      const depth = h.height + 1, leaves = h.leaves().length;
+      const W = Math.max(360, leaves * 58), H = 30 + depth * 54;
+      d3.tree().size([W - 60, H - 46])(h);
+      const svg = d3.select(treeEl).append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("class", "arch-svg").style("max-height", "300px");
+      const g = svg.append("g").attr("transform", "translate(30,22)");
+      g.selectAll("path").data(h.links()).enter().append("path").attr("d", d3.linkVertical().x((d) => d.x).y((d) => d.y)).attr("fill", "none").attr("stroke", "var(--border)").attr("stroke-width", 1.4);
+      g.selectAll("text.edge").data(h.links()).enter().append("text").attr("class", "ae-label").attr("x", (d) => (d.source.x + d.target.x) / 2 + (d.target.x < d.source.x ? -6 : 6)).attr("y", (d) => (d.source.y + d.target.y) / 2).attr("text-anchor", (d) => (d.target.x < d.source.x ? "end" : "start")).text((d) => (d.target.x < d.source.x ? "yes" : "no"));
+      const ng = g.selectAll("g.tn").data(h.descendants()).enter().append("g").attr("transform", (d) => `translate(${d.x},${d.y})`);
+      ng.append("rect").attr("x", -27).attr("y", -13).attr("width", 54).attr("height", 26).attr("rx", 5)
+        .attr("fill", (d) => `color-mix(in srgb, ${col(d.data.nd.cls)} ${Math.round((1 - d.data.nd.imp) * 45 + 10)}%, var(--bg-inset))`)
+        .attr("stroke", (d) => (d.data.nd.id === cur ? "var(--series-4)" : "var(--border)")).attr("stroke-width", (d) => (d.data.nd.id === cur ? 2.6 : 1));
+      ng.append("text").attr("class", "an-label").attr("y", -1).attr("text-anchor", "middle").style("font-size", "9px").attr("fill", "var(--text)")
+        .text((d) => (d.children ? `${d.data.nd.f} ≤ ${d.data.nd.thr.toFixed(1)}` : `class ${d.data.nd.cls}`));
+      ng.append("text").attr("y", 9).attr("text-anchor", "middle").style("font-size", "8px").attr("fill", "var(--text-faint)").text((d) => d.data.nd.counts.join("/"));
+    }
+    function drawCurve(nd) {
+      curveEl.innerHTML = "";
+      if (!nd || !nd.curves) { curveEl.innerHTML = `<div class="lab-card-note">${mode === "forest" ? "Each tree in the forest is grown exactly like the single tree, on its own bootstrap sample." : "Pick a step that splits a node to see its threshold scan."}</div>`; return; }
+      const all = [...(nd.curves.x || []), ...(nd.curves.y || [])];
+      if (!all.length) return;
+      const P = Lab.xy(curveEl, { w: 360, h: 140, xd: [-10, 10], yd: [0, Math.max(...all.map((c) => c[1])) * 1.1], xLabel: "threshold" });
+      if (nd.curves.x) P.line("x", nd.curves.x, { color: "var(--series-1)", curve: d3.curveStepAfter });
+      if (nd.curves.y) P.line("y", nd.curves.y, { color: "var(--series-5)", curve: d3.curveStepAfter });
+      P.vline(nd.thr);
+      curveEl.closest(".lab-card").querySelector(".lab-card-sub").innerHTML = `<span class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>split on x</span> <span class="legend-item"><span class="swatch" style="background:var(--series-5)"></span>split on y</span>`;
     }
 
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), label: currentClass });
-      render();
-    });
-    document.getElementById("dt-class-buttons").addEventListener("click", (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
-      currentClass = +btn.dataset.c;
-      document.querySelectorAll("#dt-class-buttons button").forEach((b) => b.classList.toggle("primary", +b.dataset.c === currentClass));
-    });
-    document.querySelector("#dt-class-buttons button").classList.add("primary");
-    ["dt-depth", "dt-nest", "dt-mode"].forEach((id) => document.getElementById(id).addEventListener("input", render));
-    document.getElementById("dt-regen").addEventListener("click", () => {
-      points = MLU.makeBlobs({ n: 70, clusters: 3 }).map((p) => ({ x: p.x, y: p.y, label: p.label }));
-      render();
-    });
-    document.getElementById("dt-clear").addEventListener("click", () => { points = []; render(); });
-
-    render();
-    return () => {};
+    function render(f) {
+      const st = f.st, pts = lab.points;
+      splitG.selectAll("*").remove(); regionG.selectAll("*").remove();
+      if (!st.nodes && !st.forest) { L.bg.selectAll("*").remove(); lab.drawPoints({}); return; }
+      if (st.forest) {
+        Lab.field(L.bg, pl, (x, y) => { const v = forestVote(st.trees.slice(0, st.T), { x, y }); const k = argmax(v); return k + (v[k] / st.T) * 0.999; }, (v) => Lab.classColor(Math.floor(v), ((v % 1) - 0.33) * 1.5, 0.42), { res: 80 });
+        // outline the newest tree's partition
+        for (const nd of st.last) if (nd.leaf) {
+          const [x0, x1, y0, y1] = nd.bounds;
+          regionG.append("rect").attr("x", pl.x(x0)).attr("y", pl.y(y1)).attr("width", pl.x(x1) - pl.x(x0)).attr("height", pl.y(y0) - pl.y(y1)).attr("fill", "none").attr("stroke", "var(--text)").attr("stroke-opacity", 0.22);
+        }
+        lab.drawPoints({ color: (d) => col(d.label), r: (d, i) => (st.mult[i] ? 3.2 + Math.min(4, st.mult[i]) * 1.4 : 3.4), opacity: (d, i) => (st.mult[i] ? 1 : 0.3) });
+        drawTree(st.last, Infinity, null);
+        drawCurve(null);
+        lab.readout(`<div class="kv"><span>trees</span><b>${st.T}</b><span>train accuracy</span><b>${((f.m.acc || 0) * 100).toFixed(1)}%</b><span>OOB error</span><b>${f.m.oob != null ? (f.m.oob * 100).toFixed(1) + "%" : "–"}</b></div>`);
+        return;
+      }
+      const nodes = st.nodes, s = st.s;
+      Lab.field(L.bg, pl, (x, y) => { const nd = leafOf(nodes, { x, y }, s); return nd.cls + (nd.counts[nd.cls] / Math.max(1, nd.n)) * 0.999; }, (v) => Lab.classColor(Math.floor(v), ((v % 1) - 0.33) * 1.5, 0.4), { res: 160, smooth: false });
+      for (const nd of nodes) if (nd.order != null && nd.order < s) {
+        const [x0, x1, y0, y1] = nd.bounds;
+        const line = nd.f === "x" ? [nd.thr, y0, nd.thr, y1] : [x0, nd.thr, x1, nd.thr];
+        splitG.append("line").attr("x1", pl.x(line[0])).attr("y1", pl.y(line[1])).attr("x2", pl.x(line[2])).attr("y2", pl.y(line[3])).attr("stroke", "var(--text)").attr("stroke-width", nd.id === st.cur ? 2.8 : 1.4).attr("opacity", 0.85);
+      }
+      const curNode = st.cur != null ? nodes[st.cur] : null;
+      if (curNode) {
+        const [x0, x1, y0, y1] = curNode.bounds;
+        regionG.append("rect").attr("x", pl.x(x0)).attr("y", pl.y(y1)).attr("width", pl.x(x1) - pl.x(x0)).attr("height", pl.y(y0) - pl.y(y1)).attr("fill", "var(--series-4)").attr("fill-opacity", 0.06).attr("stroke", "var(--series-4)").attr("stroke-width", 2.4).attr("stroke-dasharray", "6 4");
+        if (st.cand) {
+          const c = st.cand;
+          const line = c.f === "x" ? [c.thr, y0, c.thr, y1] : [x0, c.thr, x1, c.thr];
+          splitG.append("line").attr("x1", pl.x(line[0])).attr("y1", pl.y(line[1])).attr("x2", pl.x(line[2])).attr("y2", pl.y(line[3])).attr("stroke", "var(--series-4)").attr("stroke-width", 2).attr("stroke-dasharray", "4 3");
+        }
+      }
+      const inCur = curNode ? new Set(curNode.idx) : null;
+      lab.drawPoints({ color: (d) => col(d.label), opacity: (d, i) => (inCur && !inCur.has(i) ? 0.35 : 1) });
+      drawTree(nodes, s, st.cur);
+      drawCurve(curNode);
+      const leaves = nodes.filter((nd) => leafOf(nodes, { x: (nd.bounds[0] + nd.bounds[1]) / 2, y: (nd.bounds[2] + nd.bounds[3]) / 2 }, s) === nd).length;
+      lab.readout(`<div class="kv"><span>splits applied</span><b>${Math.min(s, nodes.filter((n) => n.order != null).length)}</b><span>train accuracy</span><b>${((f.m.acc || 0) * 100).toFixed(1)}%</b><span>max depth</span><b>${lab.val("depth")}</b></div>`);
+    }
+    lab.watch(["depth", "leaf", "crit", "scan", "nt", "mf"], () => retrain());
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("blobs3");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "decision-tree",
     name: "Decision Tree & Random Forest",
     category: "Supervised - Trees & Ensembles",
-    tagline: "Gini splits, optional bagging",
-    description: "A CART-style classifier that recursively splits on the axis-aligned threshold that most reduces Gini impurity. Switch to random forest mode to see bagged trees smooth out the blocky boundary.",
+    tagline: "Gini splits grow live, bagging + OOB",
+    description: "Watch a tree scan every threshold, pick the purest split and recurse, with the tree diagram growing in sync. Switch to a random forest to see bootstrap samples, feature subsampling, out-of-bag error and the vote smoothing the boundary.",
     info: {
       type: "Supervised - Classification/Regression. Non-parametric, tree-based (single tree); bagged ensemble in random-forest mode.",
       scenario: "You need an interpretable, non-linear model that handles mixed feature types without scaling (single tree); switch to random forest when you want more accuracy/robustness and can trade away some interpretability.",

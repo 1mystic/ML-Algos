@@ -1,123 +1,140 @@
 (() => {
-  const VN = 8, HN = 6, CELL = 26;
-  const sigmoid = (v) => 1 / (1 + Math.exp(-v));
+  const { ui, col, fmt } = Lab;
+  const S = 4, NV = S * S;
+  const sig = (v) => 1 / (1 + Math.exp(-v));
+  // Bars-and-stripes: any subset of rows on, or any subset of columns on.
+  function barsAndStripes() {
+    const out = new Map();
+    for (let m = 0; m < 1 << S; m++) {
+      const rows = Array.from({ length: NV }, (_, k) => ((m >> Math.floor(k / S)) & 1));
+      const cols = Array.from({ length: NV }, (_, k) => ((m >> (k % S)) & 1));
+      out.set(rows.join(""), rows); out.set(cols.join(""), cols);
+    }
+    return [...out.values()];
+  }
+  function init(nh) { MLU.seedRng(8); return { W: Array.from({ length: NV }, () => Array.from({ length: nh }, () => MLU.randn() * 0.1)), b: new Array(NV).fill(0), c: new Array(nh).fill(0), nh }; }
+  const ph = (R, v) => Array.from({ length: R.nh }, (_, j) => sig(R.c[j] + v.reduce((s, x, i) => s + x * R.W[i][j], 0)));
+  const pv = (R, h) => Array.from({ length: NV }, (_, i) => sig(R.b[i] + h.reduce((s, x, j) => s + x * R.W[i][j], 0)));
+  const bern = (p) => p.map((q) => (MLU.rng() < q ? 1 : 0));
+  const clone = (R) => ({ W: R.W.map((r) => r.slice()), b: R.b.slice(), c: R.c.slice(), nh: R.nh });
 
-  function makeRBM() {
-    const W = Array.from({ length: VN * VN }, () => Array.from({ length: HN }, () => MLU.randn() * 0.35));
-    const b = Array.from({ length: VN * VN }, () => MLU.randn() * 0.1);
-    const c = Array.from({ length: HN }, () => MLU.randn() * 0.1);
-    return { W, b, c };
+  function cdStep(R, batch, lr, k) {
+    const dW = R.W.map((r) => r.map(() => 0)), db = new Array(NV).fill(0), dc = new Array(R.nh).fill(0);
+    let err = 0;
+    for (const v0 of batch) {
+      const h0 = ph(R, v0);
+      let hs = bern(h0), vk = null, hk = null;
+      for (let s = 0; s < k; s++) { vk = pv(R, hs); hk = ph(R, vk); hs = bern(hk); }
+      for (let i = 0; i < NV; i++) { for (let j = 0; j < R.nh; j++) dW[i][j] += v0[i] * h0[j] - vk[i] * hk[j]; db[i] += v0[i] - vk[i]; err += (v0[i] - vk[i]) ** 2; }
+      for (let j = 0; j < R.nh; j++) dc[j] += h0[j] - hk[j];
+    }
+    const n = batch.length;
+    for (let i = 0; i < NV; i++) { for (let j = 0; j < R.nh; j++) R.W[i][j] += (lr * dW[i][j]) / n; R.b[i] += (lr * db[i]) / n; }
+    for (let j = 0; j < R.nh; j++) R.c[j] += (lr * dc[j]) / n;
+    return err / (n * NV);
   }
-  function sampleHiddenProbs(rbm, v) {
-    return Array.from({ length: HN }, (_, j) => sigmoid(v.reduce((s, vi, i) => s + vi * rbm.W[i][j], 0) + rbm.c[j]));
+  function fantasy(R, n, steps) {
+    return Array.from({ length: n }, () => { let v = bern(new Array(NV).fill(0.5)); for (let s = 0; s < steps; s++) { const h = bern(ph(R, v)); v = bern(pv(R, h)); } return pv(R, bern(ph(R, v))); });
   }
-  function sampleVisibleProbs(rbm, h) {
-    return Array.from({ length: VN * VN }, (_, i) => sigmoid(h.reduce((s, hj, j) => s + hj * rbm.W[i][j], 0) + rbm.b[i]));
-  }
-  function bernoulliSample(probs) { return probs.map((p) => (MLU.rng() < p ? 1 : 0)); }
+  const isValid = (v, data) => data.some((d) => d.every((x, i) => x === (v[i] > 0.5 ? 1 : 0)));
 
-  function drawSquareGrid(svgSel, n, cell, values, colorFn) {
-    const flat = [];
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) flat.push({ i, j, v: values[i * n + j] });
-    const sel = svgSel.selectAll("rect").data(flat);
-    sel.enter().append("rect").attr("width", cell - 2).attr("height", cell - 2)
-      .merge(sel).attr("x", (d) => d.j * cell).attr("y", (d) => d.i * cell).attr("fill", (d) => colorFn(d.v));
-    sel.exit().remove();
+  function buildFrames(P) {
+    const data = barsAndStripes();
+    const R = init(P.nh);
+    const frames = [];
+    // a detailed walk through one CD-1 update on one pattern
+    MLU.seedRng(31);
+    const v0 = data[5], h0 = ph(R, v0), hs = bern(h0), v1 = pv(R, hs), h1 = ph(R, v1);
+    const base = { R: clone(R), sample: data.slice(0, 8) };
+    frames.push({ phase: "data", major: true, arch: ["v"], title: `Training data: ${data.length} "bars and stripes" images (4 × 4)`, text: "Each image is all-horizontal stripes or all-vertical bars. An RBM must learn this structure with no labels: a generative model of what valid images look like.", st: { ...base } });
+    frames.push({ phase: "pos", arch: ["v", "hgv"], title: "Positive phase: hidden activations driven by a real image", text: "Each hidden unit computes p(h = 1 | v) independently, because there are no hidden-hidden connections (that is the 'restricted' part).", tex: "p(h_j=1\\mid v)=\\sigma\\Big(c_j+\\sum_i v_iW_{ij}\\Big)", st: { ...base, cd: { v0, h0 } } });
+    frames.push({ phase: "sample", arch: ["hgv", "hs"], title: "Sample binary hidden states", text: "Stochastic binary sampling acts as a strong regulariser: hidden units cannot pass fine-grained real values back.", tex: "h_j\\sim\\text{Bernoulli}\\big(p(h_j=1\\mid v)\\big)", st: { ...base, cd: { v0, h0, hs } } });
+    frames.push({ phase: "recon", arch: ["hs", "vgh"], title: "Reconstruct the image from the hidden sample", text: "Run the same weights backwards. With random weights the reconstruction is grey noise; training will make it look like the input.", tex: "p(v_i=1\\mid h)=\\sigma\\Big(b_i+\\sum_j W_{ij}h_j\\Big)", st: { ...base, cd: { v0, h0, hs, v1 } } });
+    frames.push({ phase: "neg", arch: ["vgh", "hgv2", "dw"], title: "Negative phase and the contrastive-divergence update", text: "Correlations measured on data minus correlations measured on the model's own reconstruction. This pushes probability toward real images and away from what the model currently imagines.", tex: "\\Delta W_{ij}=\\varepsilon\\big(\\langle v_ih_j\\rangle_{\\text{data}}-\\langle v_ih_j\\rangle_{\\text{recon}}\\big)", st: { ...base, cd: { v0, h0, hs, v1, h1 } } });
+    const show = new Set(Lab.checkpoints(P.epochs, 60));
+    for (let e = 1; e <= P.epochs; e++) {
+      const err = cdStep(R, MLU.shuffle(data), P.lr, P.k);
+      if (!show.has(e)) continue;
+      const fant = fantasy(R, 8, 40);
+      const valid = fant.filter((v) => isValid(v, data)).length;
+      frames.push({ phase: "train", major: e === 1, arch: ["v", "hgv", "vgh", "dw"], title: `Epoch ${e}`, text: `Reconstruction error <b>${err.toFixed(4)}</b>. Bottom row: images the model <i>dreams</i> by running 40 steps of Gibbs sampling from noise. <b>${valid}/8</b> are valid bars-and-stripes patterns. Filters (right) show each hidden unit's weights: they become row and column detectors.`, tex: "E(v,h)=-b^\\top v-c^\\top h-v^\\top Wh,\\qquad p(v,h)=\\frac{e^{-E(v,h)}}{Z}", st: { R: clone(R), sample: data.slice(0, 8), recon: data.slice(0, 8).map((v) => pv(R, ph(R, v))), fant, valid }, m: { err, valid: valid / 8 } });
+    }
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">Gibbs step <b id="rbm-step-n">0</b></span></div>
-            <div class="btn-row">
-              <button id="rbm-step" class="primary">Gibbs step (v→h→v)</button>
-              <button id="rbm-randw">randomize weights</button>
-              <button id="rbm-clear">clear canvas</button>
-            </div>
-          </div>
-          <div class="hscroll" style="display:flex;gap:26px;flex-wrap:wrap;justify-content:center;padding:14px 4px;flex:1;align-items:center">
-            <div style="text-align:center">
-              <div class="stage-hint" style="margin-bottom:6px">visible units (draw here)</div>
-              <svg id="rbm-v" width="${VN * CELL}" height="${VN * CELL}"></svg>
-            </div>
-            <div style="text-align:center">
-              <div class="stage-hint" style="margin-bottom:6px">hidden units p(h=1|v)</div>
-              <svg id="rbm-h" width="${HN * 34}" height="34"></svg>
-            </div>
-            <div style="text-align:center">
-              <div class="stage-hint" style="margin-bottom:6px">reconstruction p(v=1|h)</div>
-              <svg id="rbm-recon" width="${VN * CELL}" height="${VN * CELL}"></svg>
-            </div>
-          </div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>energy-based sampling</h3>
-            <div class="readout" id="rbm-readout">–</div>
-            <div class="note">A Restricted Boltzmann Machine has no visible-visible or hidden-hidden connections, so both conditionals factorize: p(h<sub>j</sub>=1|v)=&sigma;(&sum;<sub>i</sub>W<sub>ij</sub>v<sub>i</sub>+c<sub>j</sub>) and p(v<sub>i</sub>=1|h)=&sigma;(&sum;<sub>j</sub>W<sub>ij</sub>h<sub>j</sub>+b<sub>i</sub>). Each "Gibbs step" samples h from v, then resamples v from that h - the block-Gibbs sweep used for contrastive divergence, shown here with fixed random weights rather than trained ones.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    let rbm = makeRBM();
-    let v = new Array(VN * VN).fill(0);
-    let hProbs = new Array(HN).fill(0);
-    let vRecon = new Array(VN * VN).fill(0);
-    let stepN = 0;
-
-    const vSvg = d3.select("#rbm-v"), hSvg = d3.select("#rbm-h"), reconSvg = d3.select("#rbm-recon");
-
-    function render() {
-      document.getElementById("rbm-step-n").textContent = stepN;
-      drawSquareGrid(vSvg, VN, CELL, v, (val) => (val ? "#f5f5f4" : "#161616"));
-      drawSquareGrid(reconSvg, VN, CELL, vRecon, (val) => `rgba(125,211,252,${0.15 + val * 0.75})`);
-      const hsel = hSvg.selectAll("rect").data(hProbs);
-      hsel.enter().append("rect").attr("width", 28).attr("y", 0)
-        .merge(hsel).attr("x", (d, i) => i * 34).attr("height", (d) => Math.max(2, d * 34)).attr("y", (d) => 34 - Math.max(2, d * 34))
-        .attr("fill", "#86efac");
-      hsel.exit().remove();
-      document.getElementById("rbm-readout").innerHTML =
-        `visible units on: <b>${v.reduce((a, b) => a + b, 0)}</b> / ${VN * VN}<br>mean hidden activation: <b class="num">${hProbs.length ? MLU.mean(hProbs).toFixed(3) : "–"}</b>`;
-    }
-
-    let painting = false, eraseMode = false;
-    function paintAt(event) {
-      const rect = vSvg.node().getBoundingClientRect();
-      const px = event.clientX - rect.left, py = event.clientY - rect.top;
-      const j = Math.floor(px / CELL), i = Math.floor(py / CELL);
-      if (i >= 0 && i < VN && j >= 0 && j < VN) { v[i * VN + j] = eraseMode ? 0 : 1; render(); }
-    }
-    vSvg.on("mousedown", (event) => { painting = true; eraseMode = event.button === 2; paintAt(event); });
-    vSvg.on("mousemove", (event) => { if (painting) paintAt(event); });
-    vSvg.on("contextmenu", (event) => event.preventDefault());
-    window.addEventListener("mouseup", () => { painting = false; });
-
-    document.getElementById("rbm-step").addEventListener("click", () => {
-      hProbs = sampleHiddenProbs(rbm, v);
-      const h = bernoulliSample(hProbs);
-      vRecon = sampleVisibleProbs(rbm, h);
-      v = bernoulliSample(vRecon);
-      stepN++;
-      render();
+    const lab = Lab.studio(root, {
+      id: "rbm", fps: 4, plane: false,
+      stageHTML: `<svg data-r="rbm" class="lab-svg" viewBox="0 0 760 330"></svg>`,
+      legend: ui.legend([["var(--text)", "pixel on"], ["var(--series-1)", "positive weight"], ["var(--series-2)", "negative weight"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      hint: "top: data and reconstructions · middle: one contrastive-divergence step · right: learned filters · bottom: samples dreamed by the model",
+      side: [{ title: "model", html: ui.range("nh", "hidden units", 2, 16, 1, 12) + ui.range("lr", "learning rate ε", 0.01, 1, 0.01, 0.5) + ui.range("k", "CD-k Gibbs steps", 1, 5, 1, 1) + ui.range("ep", "epochs", 50, 2000, 50, 1000) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "v", label: "v (data)", sub: "16 visible", x: 54, y: 40, kind: "data" },
+          { id: "hgv", label: "p(h | v)", sub: "positive phase", x: 180, y: 40, kind: "op" },
+          { id: "hs", label: "sample h", sub: "Bernoulli", x: 310, y: 40, kind: "param" },
+          { id: "vgh", label: "p(v | h)", sub: "reconstruct", x: 310, y: 112, kind: "op" },
+          { id: "hgv2", label: "p(h | v′)", sub: "negative phase", x: 180, y: 112, kind: "op" },
+          { id: "dw", label: "ΔW = ε(⟨vh⟩₀ − ⟨vh⟩₁)", sub: "contrastive divergence", x: 150, y: 170, kind: "loss" },
+        ],
+        edges: [{ from: "v", to: "hgv" }, { from: "hgv", to: "hs" }, { from: "hs", to: "vgh" }, { from: "vgh", to: "hgv2" }, { from: "hgv2", to: "dw" }, { from: "hgv", to: "dw", bend: 30 }],
+      },
+      phases: { data: { label: "data", color: 3 }, pos: { label: "positive phase", color: 0 }, sample: { label: "sample", color: 4 }, recon: { label: "reconstruct", color: 2 }, neg: { label: "CD update", color: 1 }, train: { label: "training", color: 0 } },
+      charts: [{ id: "err", title: "reconstruction error & valid dreams", series: [{ key: "err", label: "recon. MSE", color: "var(--series-1)", digits: 4 }, { key: "valid", label: "valid samples", color: "var(--series-3)", dash: "4 3", digits: 2 }] }],
+      onFrame: render,
     });
-    document.getElementById("rbm-randw").addEventListener("click", () => { rbm = makeRBM(); stepN = 0; render(); });
-    document.getElementById("rbm-clear").addEventListener("click", () => { v = new Array(VN * VN).fill(0); hProbs = new Array(HN).fill(0); vRecon = new Array(VN * VN).fill(0); stepN = 0; render(); });
-
-    // seed with a simple pattern so the demo isn't blank on load
-    for (let i = 2; i < VN - 2; i++) { v[i * VN + i] = 1; v[i * VN + (VN - 1 - i)] = 1; }
-    render();
-    return () => {};
+    function retrain() { lab.load(buildFrames({ nh: lab.val("nh"), lr: lab.val("lr"), k: lab.val("k"), epochs: lab.val("ep") }), { play: true }); }
+    const svg = d3.select(lab.R("rbm"));
+    function img(x, y, v, cs, opts = {}) {
+      const g = svg.append("g").attr("transform", `translate(${x},${y})`);
+      for (let i = 0; i < NV; i++) g.append("rect").attr("x", (i % S) * cs).attr("y", Math.floor(i / S) * cs).attr("width", cs - 1).attr("height", cs - 1).attr("rx", 1)
+        .attr("fill", opts.signed ? (v[i] >= 0 ? `color-mix(in srgb, var(--series-1) ${Math.round(Math.min(1, v[i] / opts.mx) * 90 + 5)}%, var(--bg-raised))` : `color-mix(in srgb, var(--series-2) ${Math.round(Math.min(1, -v[i] / opts.mx) * 90 + 5)}%, var(--bg-raised))`) : `color-mix(in srgb, var(--text) ${Math.round(v[i] * 92 + 3)}%, var(--bg-raised))`);
+      if (opts.ring) g.append("rect").attr("x", -3).attr("y", -3).attr("width", S * cs + 5).attr("height", S * cs + 5).attr("rx", 3).attr("fill", "none").attr("stroke", opts.ring).attr("stroke-width", 2);
+      return g;
+    }
+    const lbl = (x, y, t) => svg.append("text").attr("class", "lbl").attr("x", x).attr("y", y).text(t);
+    function render(f) {
+      const st = f.st;
+      svg.selectAll("*").remove();
+      lbl(10, 14, "training images");
+      st.sample.forEach((v, k) => img(10 + k * 46, 22, v, 10));
+      if (st.recon) { lbl(10, 82, "their reconstructions"); st.recon.forEach((v, k) => img(10 + k * 46, 90, v, 10)); }
+      if (st.cd) {
+        const { v0, h0, hs, v1, h1 } = st.cd;
+        lbl(10, 82, "one CD-1 step on one image");
+        img(14, 96, v0, 14, { ring: "var(--series-4)" });
+        svg.append("text").attr("class", "lbl").attr("x", 14).attr("y", 170).text("v₀");
+        const hx = 120;
+        if (h0) h0.forEach((p, j) => { svg.append("circle").attr("cx", hx + j * 22).attr("cy", 110).attr("r", 8).attr("fill", `color-mix(in srgb, var(--series-1) ${Math.round(p * 90)}%, var(--bg-raised))`).attr("stroke", "var(--border)"); svg.append("text").attr("x", hx + j * 22).attr("y", 96).attr("text-anchor", "middle").style("font-size", "8px").attr("fill", "var(--text-faint)").text(p.toFixed(2).replace(/^0/, "")); });
+        if (hs) hs.forEach((b, j) => svg.append("rect").attr("x", hx + j * 22 - 6).attr("y", 126).attr("width", 12).attr("height", 12).attr("rx", 2).attr("fill", b ? "var(--text)" : "var(--bg-raised)").attr("stroke", "var(--border)"));
+        svg.append("text").attr("class", "lbl").attr("x", hx - 10).attr("y", 160).text("p(h|v₀) and sampled h");
+        if (v1) { img(hx + (h0.length) * 22 + 20, 96, v1, 14, { ring: "var(--series-5)" }); svg.append("text").attr("class", "lbl").attr("x", hx + h0.length * 22 + 20).attr("y", 170).text("v₁ (reconstruction)"); }
+      }
+      // filters
+      const R = st.R, mx = Math.max(1e-6, ...R.W.flat().map(Math.abs));
+      lbl(400, 14, "filters: each hidden unit's 16 weights");
+      for (let j = 0; j < R.nh; j++) img(400 + (j % 6) * 58, 22 + Math.floor(j / 6) * 58, R.W.map((r) => r[j]), 12, { signed: true, mx });
+      if (st.fant) {
+        lbl(10, 196, `dreamed samples (Gibbs chain from noise) · ${st.valid}/8 valid`);
+        st.fant.forEach((v, k) => img(10 + k * 70, 206, v, 15, { ring: isValid(v, barsAndStripes()) ? "var(--series-3)" : "var(--series-2)" }));
+      }
+      lab.readout(`<div class="kv"><span>visible × hidden</span><b>${NV} × ${R.nh}</b><span>weights</span><b>${NV * R.nh + NV + R.nh}</b><span>recon. error</span><b>${f.m && f.m.err != null ? f.m.err.toFixed(4) : "–"}</b></div><div class="note">Green ring = a valid bars-and-stripes image, red = not.</div>`);
+    }
+    lab.watch(["nh", "lr", "k", "ep"], () => retrain());
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    retrain();
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "rbm",
     name: "Restricted Boltzmann Machine",
     category: "Deep Learning",
-    tagline: "block-Gibbs sampling",
-    description: "Draw a binary pattern on the visible layer and alternately sample hidden-given-visible and visible-given-hidden - the block-Gibbs sweep at the heart of RBM training and generation.",
+    tagline: "contrastive divergence on bars & stripes",
+    description: "An energy-based generative network trained with contrastive divergence. Step through one CD-1 update (positive phase, sampling, reconstruction, negative phase), then watch hidden-unit filters turn into row and column detectors while the model learns to dream valid bars-and-stripes images.",
     info: {
       type: "Unsupervised - Generative, energy-based, bipartite undirected graphical model.",
       scenario: "Learning a probability distribution over binary (or binarized) data to generate samples, extract latent features, or pretrain deeper networks (stacked RBMs historically formed deep belief networks).",

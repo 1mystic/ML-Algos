@@ -1,136 +1,171 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
-  const N_CLASSES = 3;
+  const { ui, col, fmt } = Lab;
+  const METRIC = {
+    euclidean: (a, b) => Math.hypot(a.x - b.x, a.y - b.y),
+    manhattan: (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y),
+    chebyshev: (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)),
+  };
+  const TEX = {
+    euclidean: "d(x,x')=\\sqrt{\\textstyle\\sum_j (x_j-x'_j)^2}",
+    manhattan: "d(x,x')=\\textstyle\\sum_j |x_j-x'_j|",
+    chebyshev: "d(x,x')=\\max_j |x_j-x'_j|",
+  };
+  function classify(pts, q, k, metric, weighted, nc, skip = -1) {
+    const d = [];
+    for (let i = 0; i < pts.length; i++) if (i !== skip) d.push({ i, d: METRIC[metric](pts[i], q) });
+    d.sort((a, b) => a.d - b.d);
+    const votes = new Array(nc).fill(0);
+    for (const n of d.slice(0, k)) votes[pts[n.i].label] += weighted ? 1 / (n.d + 1e-6) : 1;
+    let best = 0; for (let c = 1; c < nc; c++) if (votes[c] > votes[best]) best = c;
+    const tot = votes.reduce((a, b) => a + b, 0) || 1;
+    return { label: best, conf: votes[best] / tot, votes, sorted: d };
+  }
 
-  function classify(pt, points, k) {
-    if (!points.length) return { label: 0, votes: [] };
-    const withD = points.map((p) => ({ p, d: MLU.dist2(pt, p) })).sort((a, b) => a.d - b.d).slice(0, Math.min(k, points.length));
-    const counts = new Array(N_CLASSES).fill(0);
-    for (const { p } of withD) counts[p.label]++;
-    let best = 0;
-    for (let i = 1; i < N_CLASSES; i++) if (counts[i] > counts[best]) best = i;
-    return { label: best, votes: counts };
+  function buildFrames(pts, q, { k, metric, weighted }, nc) {
+    if (!pts.length) return [{ phase: "idle", title: "No training points", text: "Load a dataset or click to add points.", st: { k: 0, votes: new Array(nc).fill(0) } }];
+    k = Math.min(k, pts.length);
+    const res = classify(pts, q, k, metric, weighted, nc);
+    const frames = [];
+    frames.push({ phase: "query", arch: ["q"], title: "A new query point arrives", text: "KNN has no training step at all: the model <b>is</b> the stored data. All the work happens now, at prediction time. Drag the ◆ to query anywhere.", st: { k: 0, votes: new Array(nc).fill(0) } });
+    frames.push({ phase: "dist", major: true, arch: ["q", "data", "dist"], title: `Measure the ${metric} distance to all ${pts.length} points`, text: "Every stored point is compared with the query. Line opacity shows closeness. This O(n·d) scan per query is why KNN is slow at inference on big data (KD-trees and ANN indexes help).", tex: TEX[metric], st: { k: 0, allLines: true, votes: new Array(nc).fill(0) } });
+    const votes = new Array(nc).fill(0);
+    for (let j = 0; j < k; j++) {
+      const n = res.sorted[j];
+      votes[pts[n.i].label] += weighted ? 1 / (n.d + 1e-6) : 1;
+      frames.push({
+        phase: "neigh", arch: ["dist", "sort", "topk"],
+        title: `Neighbour ${j + 1} of ${k}: class ${pts[n.i].label} at distance ${n.d.toFixed(2)}`,
+        text: `The ${metric} ball grows until it holds ${j + 1} point${j ? "s" : ""}. ${weighted ? "Distance weighting: closer neighbours carry more vote (1/d)." : "Each neighbour casts one equal vote."}`,
+        st: { k: j + 1, votes: votes.slice(), radius: n.d },
+      });
+    }
+    const tot = votes.reduce((a, b) => a + b, 0) || 1;
+    frames.push({
+      phase: "vote", major: true, arch: ["topk", "vote", "out"],
+      title: `Majority vote → class ${res.label}`,
+      text: `Votes: ${votes.map((v, c) => `class ${c}: <b>${weighted ? v.toFixed(2) : v}</b>`).join(", ")}. The vote share (${(res.conf * 100).toFixed(0)}%) is a crude probability estimate.`,
+      tex: weighted ? "\\hat y=\\arg\\max_c\\sum_{i\\in N_k(x)}\\frac{\\mathbb 1[y_i=c]}{d(x,x_i)}" : "\\hat y=\\arg\\max_c\\sum_{i\\in N_k(x)}\\mathbb 1[y_i=c]",
+      st: { k, votes: votes.slice(), radius: res.sorted[k - 1].d, decided: res.label },
+    });
+    frames.push({
+      phase: "field", major: true, arch: ["out"],
+      title: "Repeat for every location: the decision regions",
+      text: `Running the same query everywhere paints the decision boundary. Small k gives jagged islands (high variance); large k smooths them away (high bias). k = ${k} here.`,
+      st: { k, votes: votes.slice(), radius: res.sorted[k - 1].d, decided: res.label, field: true },
+    });
+    return frames;
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">
-              ${[0, 1, 2].map((i) => `<span class="legend-item"><span class="swatch" style="background:${MLU.palette[i]}"></span>class ${i}</span>`).join("")}
-            </div>
-            <div class="btn-row"><button id="knn-regen">regenerate data</button><button id="knn-clear">clear</button></div>
-          </div>
-          <svg id="knn-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">pick a class below, then click the plot to add points · move the mouse to preview a live classification</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>add points as</h3>
-            <div class="btn-row" id="knn-class-buttons">
-              ${[0, 1, 2].map((i) => `<button data-c="${i}" style="border-color:${MLU.palette[i]}">${i}</button>`).join("")}
-            </div>
-          </div>
-          <div class="control-card">
-            <h3>k = <span class="val" id="knn-k-val">5</span></h3>
-            <input type="range" id="knn-k" min="1" max="25" step="1" value="5" />
-          </div>
-          <div class="control-card">
-            <h3>live query</h3>
-            <div class="readout" id="knn-readout">move the mouse over the plot</div>
-            <div class="note">Background shading = majority vote of the k nearest neighbors at every grid cell, recomputed as you add points or change k.</div>
-          </div>
-        </div>
-      </div>
-    `;
+    const NC = 3;
+    const lab = Lab.studio(root, {
+      id: "knn", fps: 3, classes: NC,
+      legend: ui.legend([["var(--accent)", "query ◆"], ["var(--text)", "k-NN ball", "ring"]]),
+      tools: ui.btn("replay", "replay query", true) + ui.btn("loo", "scan k (LOO)", false, "leave-one-out accuracy for every k"),
+      hint: "drag the ◆ query · click adds the selected class · drag / double-click points to edit",
+      data: { kind: "class", presets: ["blobs3", "moons", "circles", "xor", "spiral", "overlap", "imbalanced"], def: "blobs3", n: 90, noise: 0.35 },
+      side: [{ title: "model", html: ui.range("k", "k (neighbours)", 1, 30, 1, 7) + ui.select("metric", "distance", ["euclidean", "manhattan", "chebyshev"], "euclidean") + ui.check("w", "distance-weighted votes", false) + ui.check("field", "always show decision regions", false) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "q", label: "query x", sub: "new point", x: 46, y: 40, kind: "data" },
+          { id: "data", label: "stored data", sub: "all (xᵢ, yᵢ)", x: 46, y: 140, kind: "data", info: "Training = memorising the dataset. Nothing is fitted." },
+          { id: "dist", label: "distances", sub: "d(x, xᵢ) ∀i", x: 160, y: 90, kind: "op" },
+          { id: "sort", label: "sort", sub: "ascending", x: 250, y: 40, w: 70, kind: "op" },
+          { id: "topk", label: "top-k", sub: "N_k(x)", x: 250, y: 140, w: 70, kind: "op" },
+          { id: "vote", label: "vote", sub: "majority", x: 338, y: 140, w: 64, kind: "op" },
+          { id: "out", label: "ŷ", sub: "class", x: 338, y: 40, w: 56, kind: "out" },
+        ],
+        edges: [{ from: "q", to: "dist" }, { from: "data", to: "dist" }, { from: "dist", to: "sort" }, { from: "sort", to: "topk" }, { from: "topk", to: "vote" }, { from: "vote", to: "out" }],
+      },
+      phases: { query: { label: "query", color: 3 }, dist: { label: "distances", color: 4 }, neigh: { label: "neighbours", color: 0 }, vote: { label: "vote", color: 2 }, field: { label: "regions", color: 2 } },
+      panels: [{ id: "votes", title: "vote tally" }],
+      charts: [{ id: "loo", title: "accuracy vs k (leave-one-out)", custom: true, note: "Leave-one-out: classify each point using all the others. The peak marks a good k; k = 1 always scores 100% on the training set itself." }],
+      onFrame: render, onData: () => { looData = null; drawLoo(); replay(); },
+    });
+    lab.editable({ onChange: () => { looData = null; drawLoo(); replay({ at: "end" }); } });
+    const pl = lab.plane, L = pl.layers;
+    const q = { x: 1.2, y: 0.8 };
+    const params = () => ({ k: lab.val("k"), metric: lab.val("metric"), weighted: lab.val("w") });
+    function replay({ at = "start" } = {}) { lab.load(buildFrames(lab.points, q, params(), NC), { at, play: at === "start" }); }
 
-    const svg = d3.select("#knn-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
+    const votes = Lab.bars(lab.R("panel-votes"), { w: 360, h: 140 });
+    let looData = null;
+    function drawLoo() {
+      const el = lab.charts.loo.el; el.innerHTML = "";
+      const P = Lab.xy(el, { w: 360, h: 130, xd: [1, 30], yd: [0, 1], xLabel: "k" });
+      if (!looData) { P.g.append("text").attr("class", "ax-label").attr("x", 190).attr("y", 60).attr("text-anchor", "middle").text("press “scan k” to compute"); return; }
+      P.line("acc", looData.map((d) => [d.k, d.acc]), { color: "var(--series-3)" });
+      const best = looData.reduce((a, b) => (b.acc > a.acc ? b : a));
+      P.g.append("circle").attr("cx", P.x(best.k)).attr("cy", P.y(best.acc)).attr("r", 4.5).attr("fill", "var(--series-3)");
+      P.vline(lab.val("k"));
+      el.closest(".lab-card").querySelector(".chart-legend").innerHTML = `best k = <b>${best.k}</b> (${(best.acc * 100).toFixed(1)}%)`;
+    }
+    lab.q('[data-b="loo"]').onclick = () => {
+      const pts = lab.points, p = params();
+      looData = d3.range(1, 31).map((k) => ({ k, acc: pts.reduce((s, pt, i) => s + (classify(pts, pt, Math.min(k, pts.length - 1), p.metric, p.weighted, NC, i).label === pt.label), 0) / Math.max(1, pts.length) }));
+      drawLoo();
+    };
+    drawLoo();
 
-    let points = MLU.makeBlobs({ n: 60, clusters: 3 }).map((p) => ({ x: p.x, y: p.y, label: p.label }));
-    let currentClass = 0;
-    const bgG = svg.append("g");
-    const ptsG = svg.append("g");
-    const cursor = svg.append("circle").attr("r", 7).attr("fill", "none").attr("stroke", "var(--text)").attr("stroke-width", 1.5).style("opacity", 0);
+    const ballG = L.mid.append("g"), qG = L.top.append("g").attr("class", "no-add").style("cursor", "move");
+    qG.append("rect").attr("x", -9).attr("y", -9).attr("width", 18).attr("height", 18).attr("transform", "rotate(45)").attr("fill", "var(--accent)").attr("stroke", "var(--bg)").attr("stroke-width", 2);
+    qG.call(d3.drag().on("drag", (ev) => {
+      q.x = Math.max(-10, Math.min(10, pl.x.invert(ev.x))); q.y = Math.max(-10, Math.min(10, pl.y.invert(ev.y)));
+      lab.load(buildFrames(lab.points, q, params(), NC), { at: "end" });
+    }));
 
-    function k() { return +document.getElementById("knn-k").value; }
-
-    function render() {
-      document.getElementById("knn-k-val").textContent = k();
-      const cell = 14;
-      const cells = [];
-      for (let px = PAD; px < W - PAD; px += cell)
-        for (let py = PAD; py < H - PAD; py += cell) {
-          const xv = x.invert(px + cell / 2), yv = y.invert(py + cell / 2);
-          const { label } = classify({ x: xv, y: yv }, points, k());
-          cells.push({ px, py, label });
-        }
-      const rects = bgG.selectAll("rect").data(cells);
-      rects.enter().append("rect").attr("width", cell).attr("height", cell)
-        .merge(rects)
-        .attr("x", (d) => d.px).attr("y", (d) => d.py)
-        .attr("fill", (d) => MLU.palette[d.label]).attr("opacity", points.length ? 0.16 : 0);
-      rects.exit().remove();
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle")
-        .attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1).style("cursor", "grab")
-        .merge(sel)
-        .attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y))
-        .attr("fill", (d) => MLU.palette[d.label])
-        .on("dblclick", (event, d) => { points = points.filter((p) => p !== d); render(); })
-        .call(d3.drag().on("drag", function (event, d) {
-          d.x = Math.max(DOMAIN[0], Math.min(DOMAIN[1], x.invert(event.x)));
-          d.y = Math.max(DOMAIN[0], Math.min(DOMAIN[1], y.invert(event.y)));
-          render();
-        }));
-      sel.exit().remove();
+    function ballPath(r) {
+      const m = lab.val("metric");
+      if (m === "euclidean") return null;
+      const cx = q.x, cy = q.y;
+      const pts = m === "manhattan" ? [[cx + r, cy], [cx, cy + r], [cx - r, cy], [cx, cy - r]] : [[cx + r, cy + r], [cx - r, cy + r], [cx - r, cy - r], [cx + r, cy - r]];
+      return "M" + pts.map((p) => `${pl.x(p[0])},${pl.y(p[1])}`).join("L") + "Z";
     }
 
-    svg.on("click", (event) => {
-      if (event.target.tagName === "circle") return;
-      const [px, py] = d3.pointer(event);
-      points.push({ x: x.invert(px), y: y.invert(py), label: currentClass });
-      render();
-    });
-    svg.on("mousemove", (event) => {
-      const [px, py] = d3.pointer(event);
-      if (px < PAD || px > W - PAD || py < PAD || py > H - PAD) { cursor.style("opacity", 0); return; }
-      const pt = { x: x.invert(px), y: y.invert(py) };
-      const { label, votes } = classify(pt, points, k());
-      cursor.attr("cx", px).attr("cy", py).attr("stroke", MLU.palette[label]).style("opacity", points.length ? 1 : 0);
-      if (points.length) {
-        document.getElementById("knn-readout").innerHTML =
-          `query → class <b style="color:${MLU.palette[label]}">${label}</b><br>votes: ${votes.map((v, i) => `<span style="color:${MLU.palette[i]}">${v}</span>`).join(" · ")}`;
+    function render(f) {
+      const p = params();
+      const st = f.st;
+      const res = lab.points.length ? classify(lab.points, q, Math.min(p.k, lab.points.length), p.metric, p.weighted, NC) : null;
+      if ((st.field || lab.val("field")) && lab.points.length) {
+        Lab.field(L.bg, pl, (x, y) => { const r = classify(lab.points, { x, y }, Math.min(p.k, lab.points.length), p.metric, p.weighted, NC); return r.label + r.conf * 0.999; },
+          (v) => Lab.classColor(Math.floor(v), (v % 1) * 1.6 - 0.5, 0.36), { res: 70 });
+      } else L.bg.selectAll("*").remove();
+      const inK = new Set(res && st.k ? res.sorted.slice(0, st.k).map((n) => n.i) : []);
+      const maxD = res ? res.sorted[res.sorted.length - 1].d : 1;
+      const lines = L.links.selectAll("line").data(res && (st.allLines || st.k) ? res.sorted.filter((n) => st.allLines || inK.has(n.i)) : []);
+      lines.exit().remove();
+      lines.enter().append("line").merge(lines)
+        .attr("x1", pl.x(q.x)).attr("y1", pl.y(q.y)).attr("x2", (n) => pl.x(lab.points[n.i].x)).attr("y2", (n) => pl.y(lab.points[n.i].y))
+        .attr("stroke", (n) => (inK.has(n.i) ? col(lab.points[n.i].label) : "var(--text-faint)"))
+        .attr("stroke-width", (n) => (inK.has(n.i) ? 2 : 0.6)).attr("stroke-opacity", (n) => (inK.has(n.i) ? 0.9 : 0.5 * (1 - n.d / maxD) + 0.04));
+      // neighbourhood ball
+      ballG.selectAll("*").remove();
+      if (st.radius) {
+        const bp = ballPath(st.radius);
+        const sh = bp ? ballG.append("path").attr("d", bp) : ballG.append("ellipse").attr("cx", pl.x(q.x)).attr("cy", pl.y(q.y)).attr("rx", Math.abs(pl.x(st.radius) - pl.x(0))).attr("ry", Math.abs(pl.y(st.radius) - pl.y(0)));
+        sh.attr("fill", st.decided != null ? col(st.decided) : "var(--text)").attr("fill-opacity", 0.07).attr("stroke", "var(--text)").attr("stroke-dasharray", "5 4").attr("stroke-width", 1.4);
       }
-    });
-    document.getElementById("knn-class-buttons").addEventListener("click", (e) => {
-      const btn = e.target.closest("button"); if (!btn) return;
-      currentClass = +btn.dataset.c;
-      document.querySelectorAll("#knn-class-buttons button").forEach((b) => b.classList.toggle("primary", +b.dataset.c === currentClass));
-    });
-    document.querySelector("#knn-class-buttons button").classList.add("primary");
-    document.getElementById("knn-k").addEventListener("input", render);
-    document.getElementById("knn-regen").addEventListener("click", () => {
-      points = MLU.makeBlobs({ n: 60, clusters: 3 }).map((p) => ({ x: p.x, y: p.y, label: p.label }));
-      render();
-    });
-    document.getElementById("knn-clear").addEventListener("click", () => { points = []; render(); });
-
-    render();
-    return () => {};
+      lab.drawPoints({ color: (d) => col(d.label), r: (d, i) => (inK.has(i) ? 6.5 : 4.4), stroke: (d, i) => (inK.has(i) ? "var(--text)" : "var(--bg)"), sw: (d, i) => (inK.has(i) ? 1.8 : 1.1) });
+      qG.attr("transform", `translate(${pl.x(q.x)},${pl.y(q.y)})`);
+      qG.select("rect").attr("fill", st.decided != null ? col(st.decided) : "var(--accent)");
+      votes.set(st.votes.map((v, c) => ({ label: "class " + c, value: v, color: col(c), text: p.weighted ? v.toFixed(2) : String(v) })));
+      lab.readout(`<div class="kv"><span>query</span><b>(${q.x.toFixed(2)}, ${q.y.toFixed(2)})</b><span>prediction</span><b>${res ? "class " + res.label : "–"}</b><span>vote share</span><b>${res ? (res.conf * 100).toFixed(0) + "%" : "–"}</b><span>training cost</span><b>0 (lazy)</b></div>`);
+      if (looData) { const P = lab.charts.loo.el.querySelector("svg"); if (P) drawLoo(); }
+    }
+    lab.watch(["k", "metric", "w"], () => replay({ at: "end" }));
+    lab.watch(["field"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="replay"]').onclick = () => replay();
+    lab.loadPreset("blobs3");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "knn",
     name: "K-Nearest Neighbors",
     category: "Supervised - Classification",
-    tagline: "brute-force vote, live query",
-    description: "Classifies a query point by majority vote among its k closest training points. Move the mouse to query live; the shaded background is that same vote evaluated on a grid.",
+    tagline: "lazy learner: distances, neighbours, vote",
+    description: "No training at all: the data is the model. Drag a query point and watch distances get measured, the neighbour ball grow one point at a time, and the vote decide; then scan k with leave-one-out accuracy.",
     info: {
       type: "Supervised - Classification (a regression variant also exists). Non-parametric, instance-based ('lazy') learning.",
       scenario: "Irregular / non-linear decision boundaries where enough labeled data exists near any likely query point, and a training phase isn't wanted or needed.",

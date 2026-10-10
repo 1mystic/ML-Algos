@@ -1,156 +1,121 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
-  const DOMAIN = [-10, 10];
+  const { ui, col, fmt } = Lab;
 
-  function sse(vals) { if (!vals.length) return 0; const m = MLU.mean(vals); return vals.reduce((s, v) => s + (v - m) ** 2, 0); }
-  function makeLeaf(points) { return { leaf: true, points, value: points.length ? MLU.mean(points.map((p) => p.y)) : 0 }; }
-  function bestSplit(points) {
-    if (points.length < 4) return null;
-    const xs = [...new Set(points.map((p) => p.x))].sort((a, b) => a - b);
-    if (xs.length < 2) return null;
-    const base = sse(points.map((p) => p.y));
-    let best = null;
-    for (let i = 0; i < xs.length - 1; i++) {
-      const thr = (xs[i] + xs[i + 1]) / 2;
-      const left = points.filter((p) => p.x <= thr), right = points.filter((p) => p.x > thr);
-      if (!left.length || !right.length) continue;
-      const gain = base - (sse(left.map((p) => p.y)) + sse(right.map((p) => p.y)));
-      if (!best || gain > best.gain) best = { thr, left, right, gain };
-    }
-    return best && best.gain > 1e-9 ? best : null;
-  }
-  // Leaf-wise (best-first): always split whichever current leaf gives the single largest gain.
-  function buildLeafWise(points, budget) {
-    const root = makeLeaf(points);
-    let leaves = [root];
-    while (leaves.length < budget) {
-      let bestIdx = -1, bestInfo = null;
-      leaves.forEach((leaf, i) => {
-        const s = bestSplit(leaf.points);
-        if (s && (!bestInfo || s.gain > bestInfo.gain)) { bestInfo = s; bestIdx = i; }
-      });
-      if (bestIdx === -1) break;
-      const leaf = leaves[bestIdx];
-      leaf.leaf = false; leaf.thr = bestInfo.thr;
-      leaf.left = makeLeaf(bestInfo.left); leaf.right = makeLeaf(bestInfo.right);
-      leaves.splice(bestIdx, 1, leaf.left, leaf.right);
-    }
-    return { root, leafCount: leaves.length };
-  }
-  // Level-wise (traditional): expand every current leaf together, one full level at a time.
-  function buildLevelWise(points, budget) {
-    const root = makeLeaf(points);
-    let leaves = [root];
-    while (leaves.length * 2 <= budget) {
-      const current = leaves.slice();
-      const next = [];
-      let didSplit = false;
-      for (const leaf of current) {
-        const s = bestSplit(leaf.points);
-        if (s) {
-          leaf.leaf = false; leaf.thr = s.thr;
-          leaf.left = makeLeaf(s.left); leaf.right = makeLeaf(s.right);
-          next.push(leaf.left, leaf.right); didSplit = true;
-        } else next.push(leaf);
+  function buildFrames(pts, P) {
+    const n = pts.length;
+    if (!pts.some((p) => p.label === 0) || !pts.some((p) => p.label === 1)) return [{ phase: "idle", title: "Need both classes", text: "", st: { trees: [], F: [] } }];
+    const bins = GBDT.makeBins(pts, P.maxBin);
+    const base = Math.log((pts.filter((p) => p.label).length + 0.5) / (pts.filter((p) => !p.label).length + 0.5));
+    const F = new Array(n).fill(base);
+    const trees = [];
+    const frames = [{ phase: "bin", major: true, arch: ["bin"], title: `Histogram binning: each feature bucketed into ≤ ${P.maxBin} bins`, text: `Before any tree is grown, every feature value is replaced by its quantile bin (grid lines). Split search then scans ${bins.x.length + 1} + ${bins.y.length + 1} bin boundaries instead of ${n - 1} × 2 sorted values, using per-bin sums of g and h. This is the main reason LightGBM is fast.`, tex: "\\text{cost per split: }O(\\#\\text{bins})\\text{ instead of }O(n)", st: { trees: [], F: F.slice(), bins }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } }];
+    for (let t = 1; t <= P.rounds; t++) {
+      const { g, h } = GBDT.gradHess(pts, F);
+      // GOSS: keep the top-a fraction by |g|, sample b of the rest and up-weight them
+      let idx = pts.map((_, i) => i), w = new Array(n).fill(1), goss = null;
+      if (P.goss) {
+        const order = idx.slice().sort((a, b) => Math.abs(g[b]) - Math.abs(g[a]));
+        const nTop = Math.max(1, Math.round(0.2 * n)), nRand = Math.max(1, Math.round(0.15 * n));
+        const top = order.slice(0, nTop), rest = MLU.shuffle(order.slice(nTop)).slice(0, nRand);
+        idx = top.concat(rest);
+        for (const i of rest) w[i] = (1 - 0.2) / 0.15;
+        goss = { top: new Set(top), rand: new Set(rest) };
+        if (t <= 2) frames.push({ phase: "goss", arch: ["gh", "goss"], title: `Round ${t}: GOSS keeps ${nTop} large-gradient points + ${nRand} random others`, text: "Gradient-based One-Side Sampling: points with small gradients are already well fit, so most of them are dropped. The random survivors are up-weighted by (1 − a)/b to keep the gradient sums unbiased. Faded points are skipped this round.", tex: "\\tilde G=\\sum_{i\\in A}g_i+\\frac{1-a}{b}\\sum_{i\\in B}g_i", st: { trees: trees.slice(), F: F.slice(), bins, goss, g }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } });
       }
-      leaves = next;
-      if (!didSplit) break;
+      const detail = t <= 2;
+      const tree = GBDT.growLeafwise(pts, idx, g, h, w, { numLeaves: P.numLeaves, lam: P.lam, gamma: 0, minH: 0.5, bins }, detail ? (nodes, frontier, pick) => {
+        frames.push({ phase: "leaf", arch: ["hist", "pick", "split"], title: `Round ${t}: split the leaf with the largest gain (${pick.cand.gain.toFixed(3)})`, text: `Leaf-wise growth: of the ${frontier.length} current leaves, only the most promising one is split, wherever it is in the tree. Level-wise (XGBoost default) would split every leaf at this depth. Gains are listed in the leaf queue.`, tex: "\\ell^\\star=\\arg\\max_{\\ell\\in\\text{leaves}}\\text{Gain}(\\ell)", st: { trees: trees.slice(), F: F.slice(), bins, goss, grow: { nodes: nodes.map((nd) => ({ ...nd })), frontier: frontier.map((nd) => ({ id: nd.id, gain: nd.cand.gain, f: nd.cand.f, thr: nd.cand.thr, n: nd.idx.length, bounds: nd.bounds })), pick: pick.id } }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } });
+      } : null);
+      for (let i = 0; i < n; i++) F[i] += P.eta * GBDT.leafFor(tree.nodes, pts[i]).w;
+      trees.push(tree.nodes);
+      const show = t <= 4 || t % Math.max(1, Math.round(P.rounds / 30)) === 0 || t === P.rounds;
+      if (show) frames.push({ phase: "add", major: t === 1, arch: ["split", "add"], title: `Round ${t}: tree with ${tree.nodes.filter((nd) => nd.leaf).length} leaves added`, text: `Log-loss <b>${GBDT.logloss(pts, F).toFixed(4)}</b>, accuracy <b>${(GBDT.accuracy(pts, F) * 100).toFixed(1)}%</b>. Leaf-wise trees are deep and lopsided where the data is hard, shallow where it is easy.`, tex: "F_t=F_{t-1}+\\eta\\,f_t", st: { trees: trees.slice(), F: F.slice(), bins, last: tree.nodes }, m: { loss: GBDT.logloss(pts, F), acc: GBDT.accuracy(pts, F) } });
     }
-    return { root, leafCount: leaves.length };
+    frames.push({ ...frames[frames.length - 1], phase: "done", major: true, arch: ["add"], title: `${P.rounds} rounds complete`, text: "Same second-order objective as XGBoost; the differences are engineering: histograms, leaf-wise growth with num_leaves as the main capacity knob, GOSS sampling and exclusive feature bundling for sparse data." });
+    return frames;
   }
-  function predictTree(node, x) { return node.leaf ? node.value : predictTree(x <= node.thr ? node.left : node.right, x); }
-  function targetFn(xv) { return 2.4 * Math.sin(xv * 0.7) + 0.15 * xv; }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:var(--accent)"></span>leaf-wise (LightGBM-style)</span>
-              <span class="legend-item"><span class="swatch" style="background:${MLU.palette[1]}"></span>level-wise (traditional)</span>
-            </div>
-            <div class="btn-row"><button id="lgb-regen">regenerate data</button></div>
-          </div>
-          <svg id="lgb-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">both trees are grown to (at most) the same leaf budget - compare the resulting fit and MSE</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>leaf budget <span class="val" id="lgb-budget-val">8</span></h3>
-            <input type="range" id="lgb-budget" min="2" max="24" step="1" value="8" />
-          </div>
-          <div class="control-card">
-            <h3>result</h3>
-            <div class="readout" id="lgb-readout">–</div>
-            <div class="note">Level-wise growth can only add a full layer at a time, so its leaf count jumps in powers of 2; leaf-wise growth spends every leaf where the single biggest error reduction is, hitting the exact budget and usually reaching lower training error for the same number of leaves - LightGBM's core real-world speed/accuracy trade-off.</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#lgb-svg");
-    const x = d3.scaleLinear().domain(DOMAIN).range([PAD, W - PAD]);
-    const y = d3.scaleLinear().domain(DOMAIN).range([H - PAD, PAD]);
-    MLU.drawAxes(svg.node(), W, H, PAD, [DOMAIN[0], DOMAIN[1], DOMAIN[0], DOMAIN[1]]);
-
-    function genData() {
-      const pts = [];
-      for (let i = 0; i < 60; i++) { const xv = MLU.randRange(...DOMAIN); pts.push({ x: xv, y: targetFn(xv) + MLU.randn() * 0.6 }); }
-      return pts;
+    const lab = Lab.studio(root, {
+      id: "lgbm", fps: 2.5, classes: 2,
+      legend: ui.legend([["var(--text-faint)", "bin boundaries", "line"], ["var(--series-4)", "leaf chosen to split", "ring"]]),
+      tools: ui.btn("retrain", "retrain", true),
+      hint: "click adds the selected class · drag / double-click to edit",
+      data: { kind: "class", presets: ["spiral", "moons", "circles", "xor", "overlap", "imbalanced"], def: "spiral", n: 160, noise: 0.15, nRange: [20, 300] },
+      side: [{ title: "booster", html: ui.range("R", "rounds", 1, 80, 1, 30) + ui.range("eta", "learning_rate", 0.05, 1, 0.05, 0.3) + ui.range("leaves", "num_leaves", 2, 31, 1, 8) + ui.range("bins", "max_bin", 4, 64, 1, 16) + ui.range("lam", "lambda_l2", 0, 10, 0.5, 1) + ui.check("goss", "GOSS sampling", false) + ui.check("grid", "show bin grid", true) }],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "bin", label: "binning", sub: "quantile histograms", x: 62, y: 40, kind: "param" },
+          { id: "gh", label: "g, h", sub: "per point", x: 50, y: 108, w: 60, kind: "loss" },
+          { id: "goss", label: "GOSS", sub: "sample by |g|", x: 50, y: 166, w: 74, kind: "param" },
+          { id: "hist", label: "Σg, Σh per bin", sub: "per leaf", x: 186, y: 40, kind: "op" },
+          { id: "pick", label: "best leaf", sub: "max gain", x: 186, y: 108, kind: "op" },
+          { id: "split", label: "split it", sub: "leaf-wise", x: 300, y: 108, kind: "op" },
+          { id: "add", label: "F += η f", sub: "add tree", x: 300, y: 166, kind: "out" },
+        ],
+        edges: [{ from: "bin", to: "hist" }, { from: "gh", to: "hist" }, { from: "goss", to: "gh", dash: true }, { from: "hist", to: "pick" }, { from: "pick", to: "split" }, { from: "split", to: "pick", bend: 20, dash: true, label: "until num_leaves" }, { from: "split", to: "add" }],
+      },
+      phases: { bin: { label: "binning", color: 3 }, goss: { label: "GOSS", color: 4 }, leaf: { label: "leaf-wise split", color: 0 }, add: { label: "add tree", color: 2 }, done: { label: "done", color: 2 } },
+      panels: [{ id: "queue", title: "leaf queue (candidate gains)" }],
+      charts: [{ id: "loss", title: "training log-loss & accuracy", series: [{ key: "loss", label: "log-loss", color: "var(--series-1)" }, { key: "acc", label: "accuracy", color: "var(--series-3)", dash: "4 3" }] }],
+      onFrame: render, onData: () => retrain(),
+    });
+    lab.editable({ onChange: () => retrain({ at: "end" }) });
+    const pl = lab.plane, L = pl.layers;
+    const P = () => ({ rounds: lab.val("R"), eta: lab.val("eta"), numLeaves: lab.val("leaves"), maxBin: lab.val("bins"), lam: lab.val("lam"), goss: lab.val("goss") });
+    let base = 0;
+    function retrain({ at = "start" } = {}) {
+      const pts = lab.points;
+      base = Math.log((pts.filter((p) => p.label).length + 0.5) / (pts.filter((p) => !p.label).length + 0.5));
+      MLU.seedRng(21);
+      lab.load(buildFrames(pts, P()), { at, play: at === "start" });
     }
-    let points = genData();
-
-    const pathLeaf = svg.append("path").attr("fill", "none").attr("stroke", "var(--accent)").attr("stroke-width", 2.2);
-    const pathLevel = svg.append("path").attr("fill", "none").attr("stroke", MLU.palette[1]).attr("stroke-width", 2.2).attr("stroke-dasharray", "5,3");
-    const ptsG = svg.append("g");
-
-    function budget() { return +document.getElementById("lgb-budget").value; }
-
-    function curveFor(predictFn) {
-      const steps = 160;
-      const line = d3.line().x((d) => x(d[0])).y((d) => y(d[1]));
-      return line(Array.from({ length: steps + 1 }, (_, i) => {
-        const xv = DOMAIN[0] + (i / steps) * (DOMAIN[1] - DOMAIN[0]);
-        return [xv, predictFn(xv)];
-      }));
+    const gridG = L.under.append("g"), leafG = L.mid.append("g");
+    function render(f) {
+      const st = f.st, p = P();
+      if (!st.F.length) { L.bg.selectAll("*").remove(); lab.drawPoints({}); return; }
+      const pred = (q) => base + st.trees.reduce((s, nodes) => s + p.eta * GBDT.leafFor(nodes, q).w, 0);
+      const grid = Lab.sampleGrid(pl, (x, y) => GBDT.sigmoid(pred({ x, y })), 110);
+      Lab.paintGrid(L.bg, pl, grid, (v) => Lab.probColor(v, 0.5), { smooth: false });
+      Lab.contour(L.under, pl, grid, [0.5], { cls: "iso-main", width: 2 });
+      gridG.selectAll("*").remove();
+      if (lab.val("grid") && st.bins) {
+        for (const e of st.bins.x) gridG.append("line").attr("x1", pl.x(e)).attr("x2", pl.x(e)).attr("y1", pl.y(-10)).attr("y2", pl.y(10)).attr("stroke", "var(--text-faint)").attr("stroke-opacity", 0.45).attr("stroke-dasharray", "2 3");
+        for (const e of st.bins.y) gridG.append("line").attr("y1", pl.y(e)).attr("y2", pl.y(e)).attr("x1", pl.x(-10)).attr("x2", pl.x(10)).attr("stroke", "var(--text-faint)").attr("stroke-opacity", 0.45).attr("stroke-dasharray", "2 3");
+      }
+      leafG.selectAll("*").remove();
+      const rect = (b, attrs) => { const [x0, x1, y0, y1] = b; const r = leafG.append("rect").attr("x", pl.x(x0)).attr("y", pl.y(y1)).attr("width", pl.x(x1) - pl.x(x0)).attr("height", pl.y(y0) - pl.y(y1)); for (const k in attrs) r.attr(k, attrs[k]); return r; };
+      const q = lab.R("panel-queue");
+      if (st.grow) {
+        for (const nd of st.grow.nodes) if (nd.leaf) rect(nd.bounds, { fill: "none", stroke: "var(--text)", "stroke-opacity": 0.4, "stroke-dasharray": "3 3" });
+        const pk = st.grow.frontier.find((c) => c.id === st.grow.pick);
+        rect(pk.bounds, { fill: "var(--series-4)", "fill-opacity": 0.08, stroke: "var(--series-4)", "stroke-width": 2.6 });
+        const [x0, x1, y0, y1] = pk.bounds;
+        const ln = pk.f === "x" ? [pk.thr, y0, pk.thr, y1] : [x0, pk.thr, x1, pk.thr];
+        leafG.append("line").attr("x1", pl.x(ln[0])).attr("y1", pl.y(ln[1])).attr("x2", pl.x(ln[2])).attr("y2", pl.y(ln[3])).attr("stroke", "var(--series-4)").attr("stroke-width", 2.4).attr("stroke-dasharray", "6 4");
+        q.innerHTML = `<table class="mini-table"><tr><th>leaf</th><th>points</th><th>best split</th><th>gain</th></tr>${st.grow.frontier.map((c) => `<tr class="${c.id === st.grow.pick ? "on" : ""}"><td>#${c.id}</td><td>${c.n}</td><td>${c.f} ≤ ${c.thr.toFixed(2)}</td><td>${c.gain.toFixed(3)}</td></tr>`).join("")}</table>`;
+      } else if (st.last) {
+        for (const nd of st.last) if (nd.leaf) rect(nd.bounds, { fill: "none", stroke: "var(--text)", "stroke-opacity": 0.35, "stroke-dasharray": "3 3" });
+        q.innerHTML = `<div class="lab-card-note">Leaf-wise growth is recorded in detail for the first two rounds. This tree has <b>${st.last.filter((nd) => nd.leaf).length}</b> leaves at depths ${[...new Set(st.last.filter((nd) => nd.leaf).map((nd) => nd.depth))].sort().join(", ")}: unbalanced, unlike a level-wise tree.</div>`;
+      } else q.innerHTML = `<div class="lab-card-note">The queue appears while the first trees are grown.</div>`;
+      lab.drawPoints({ color: (d) => col(d.label), opacity: (d, i) => (st.goss && !st.goss.top.has(i) && !st.goss.rand.has(i) ? 0.18 : 1), r: (d, i) => (st.goss && st.goss.rand.has(i) ? 6 : 4.2), stroke: (d, i) => (st.goss && st.goss.top.has(i) ? "var(--text)" : "var(--bg)") });
+      const m = f.m || {};
+      lab.readout(`<div class="kv"><span>trees</span><b>${st.trees.length}</b><span>bins (x / y)</span><b>${st.bins ? st.bins.x.length + 1 + " / " + (st.bins.y.length + 1) : "–"}</b><span>log-loss</span><b>${fmt(m.loss)}</b><span>accuracy</span><b>${m.acc != null ? (m.acc * 100).toFixed(1) + "%" : "–"}</b></div>`);
     }
-
-    function render() {
-      document.getElementById("lgb-budget-val").textContent = budget();
-      const leafTree = buildLeafWise(points, budget());
-      const levelTree = buildLevelWise(points, budget());
-      const predLeaf = (xv) => predictTree(leafTree.root, xv);
-      const predLevel = (xv) => predictTree(levelTree.root, xv);
-
-      pathLeaf.attr("d", curveFor(predLeaf));
-      pathLevel.attr("d", curveFor(predLevel));
-
-      const sel = ptsG.selectAll("circle").data(points);
-      sel.enter().append("circle").attr("r", 4.5).attr("fill", MLU.palette[2]).attr("stroke", "var(--bg)").attr("stroke-width", 1)
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y));
-      sel.exit().remove();
-
-      const mseLeaf = MLU.mean(points.map((p) => (p.y - predLeaf(p.x)) ** 2));
-      const mseLevel = MLU.mean(points.map((p) => (p.y - predLevel(p.x)) ** 2));
-      document.getElementById("lgb-readout").innerHTML =
-        `leaf-wise: <b>${leafTree.leafCount}</b> leaves, MSE <b class="num">${mseLeaf.toFixed(3)}</b><br>` +
-        `level-wise: <b>${levelTree.leafCount}</b> leaves, MSE <b class="num">${mseLevel.toFixed(3)}</b>`;
-    }
-
-    document.getElementById("lgb-budget").addEventListener("input", render);
-    document.getElementById("lgb-regen").addEventListener("click", () => { points = genData(); render(); });
-
-    render();
-    return () => {};
+    lab.watch(["R", "eta", "leaves", "bins", "lam", "goss"], () => retrain());
+    lab.watch(["grid"], () => lab.player.redraw(), { live: true });
+    lab.q('[data-b="retrain"]').onclick = () => retrain();
+    lab.loadPreset("spiral");
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "lightgbm",
     name: "LightGBM",
     category: "Supervised - Trees & Ensembles",
-    tagline: "leaf-wise growth, histogram splits",
-    description: "A gradient-boosting variant built for speed at scale: it grows each tree leaf-wise (always splitting whichever leaf helps most) instead of level-wise, and bins continuous features into histograms so split-finding is fast.",
+    tagline: "histograms, leaf-wise growth, GOSS",
+    description: "The engineering behind LightGBM's speed: quantile histogram bins, leaf-wise growth that always splits the single best leaf, and gradient-based one-side sampling, each animated on a spiral dataset.",
     info: {
       type: "Supervised - Regression/Classification. Histogram-based, leaf-wise (best-first) gradient-boosted tree ensemble.",
       scenario: "Very large or high-dimensional tabular datasets where training speed and memory matter - LightGBM trades some tree 'balance' for much faster training.",

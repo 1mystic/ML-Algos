@@ -1,178 +1,173 @@
 (() => {
-  const W = 640, H = 460, PAD = 36;
+  const { ui, col, fmt } = Lab;
 
-  function pairwiseSq(X) {
-    const n = X.length;
-    const D = MLU.zeros(n, n);
-    for (let i = 0; i < n; i++)
-      for (let j = i + 1; j < n; j++) {
-        let s = 0; for (let k = 0; k < X[i].length; k++) s += (X[i][k] - X[j][k]) ** 2;
-        D[i][j] = D[j][i] = s;
-      }
-    return D;
-  }
-  function computeP(D, perplexity) {
-    const n = D.length;
-    const P = MLU.zeros(n, n);
-    const target = Math.log(perplexity);
-    for (let i = 0; i < n; i++) {
-      let betaMin = -Infinity, betaMax = Infinity, beta = 1;
-      for (let iter = 0; iter < 50; iter++) {
-        let sumP = 0, H = 0;
-        const row = new Array(n).fill(0);
-        for (let j = 0; j < n; j++) {
-          if (j === i) continue;
-          row[j] = Math.exp(-D[i][j] * beta);
-          sumP += row[j];
-        }
-        sumP = sumP || 1e-12;
-        for (let j = 0; j < n; j++) {
-          if (j === i) continue;
-          const pj = row[j] / sumP;
-          if (pj > 1e-12) H -= pj * Math.log(pj);
-        }
-        const diff = H - target;
-        if (Math.abs(diff) < 1e-5) { for (let j = 0; j < n; j++) P[i][j] = row[j] / sumP; break; }
-        if (diff > 0) { betaMin = beta; beta = betaMax === Infinity ? beta * 2 : (beta + betaMax) / 2; }
-        else { betaMax = beta; beta = betaMin === -Infinity ? beta / 2 : (beta + betaMin) / 2; }
-        if (iter === 49) for (let j = 0; j < n; j++) P[i][j] = row[j] / sumP;
-      }
+  // ---- high-dimensional example data (labels are only used for colour)
+  function makeData(kind, n) {
+    const X = [], lab = [];
+    if (kind === "clusters6" || kind === "clusters3") {
+      const k = kind === "clusters6" ? 6 : 3, D = kind === "clusters6" ? 10 : 8;
+      const C = Array.from({ length: k }, () => Array.from({ length: D }, () => MLU.randn() * 4));
+      const spread = kind === "clusters3" ? [0.5, 1.5, 3] : new Array(k).fill(1);
+      for (let i = 0; i < n; i++) { const c = i % k; X.push(C[c].map((v) => v + MLU.randn() * spread[c])); lab.push(c); }
+    } else if (kind === "swiss") {
+      for (let i = 0; i < n; i++) { const t = 1.5 * Math.PI * (1 + 2 * MLU.rng()), h = MLU.rng() * 12; X.push([t * Math.cos(t), h, t * Math.sin(t)]); lab.push(Math.min(6, Math.floor(((t - 1.5 * Math.PI) / (3 * Math.PI)) * 7))); }
+    } else { // shells
+      for (let i = 0; i < n; i++) { const c = i % 2, r = c ? 6 : 2; const v = [MLU.randn(), MLU.randn(), MLU.randn()]; const s = Math.hypot(...v); X.push(v.map((q) => (q / s) * r + MLU.randn() * 0.15)); lab.push(c); }
     }
-    // symmetrize
-    const Ps = MLU.zeros(n, n);
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) Ps[i][j] = Math.max((P[i][j] + P[j][i]) / (2 * n), 1e-12);
-    return Ps;
+    return { X, lab, D: X[0].length };
   }
 
-  function makeClusterData() {
-    const dims = 5, clusters = 4, perCluster = 15;
-    const centers = Array.from({ length: clusters }, () => Array.from({ length: dims }, () => MLU.randRange(-6, 6)));
-    const X = [], labels = [];
-    for (let c = 0; c < clusters; c++)
-      for (let i = 0; i < perCluster; i++) {
-        X.push(centers[c].map((v) => v + MLU.randn() * 1.1));
-        labels.push(c);
+  function affinities(X, perp) {
+    const n = X.length;
+    const D = X.map((a) => X.map((b) => a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0)));
+    const P = MLU.zeros(n, n), sig = [];
+    const H = Math.log(perp);
+    for (let i = 0; i < n; i++) {
+      let lo = 1e-20, hi = 1e20, beta = 1;
+      for (let it = 0; it < 60; it++) {
+        let sum = 0, sumDP = 0;
+        for (let j = 0; j < n; j++) if (j !== i) { const p = Math.exp(-D[i][j] * beta); P[i][j] = p; sum += p; sumDP += D[i][j] * p; }
+        sum = sum || 1e-12;
+        const h = Math.log(sum) + (beta * sumDP) / sum;
+        for (let j = 0; j < n; j++) P[i][j] /= sum;
+        if (Math.abs(h - H) < 1e-5) break;
+        if (h > H) { lo = beta; beta = hi === 1e20 ? beta * 2 : (beta + hi) / 2; } else { hi = beta; beta = (beta + lo) / 2; }
       }
-    return { X, labels };
+      sig.push(Math.sqrt(1 / (2 * beta)));
+    }
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { const v = (P[i][j] + P[j][i]) / (2 * n); P[i][j] = P[j][i] = Math.max(v, 1e-12); }
+    return { P, sig };
+  }
+
+  function run(X, { perp, lr, iters, exag }) {
+    const n = X.length;
+    const { P, sig } = affinities(X, perp);
+    let Y = Array.from({ length: n }, () => [MLU.randn() * 1e-2, MLU.randn() * 1e-2]);
+    const V = Y.map(() => [0, 0]), G = Y.map(() => [1, 1]);
+    const frames = [];
+    const every = Math.max(1, Math.round(iters / 70));
+    for (let t = 0; t <= iters; t++) {
+      const ex = exag && t < 100 ? 12 : 1;
+      const num = MLU.zeros(n, n); let Z = 0;
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) { const q = 1 / (1 + (Y[i][0] - Y[j][0]) ** 2 + (Y[i][1] - Y[j][1]) ** 2); num[i][j] = num[j][i] = q; Z += 2 * q; }
+      if (t % every === 0 || t === iters) {
+        let kl = 0;
+        for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j) kl += P[i][j] * Math.log(P[i][j] / Math.max(num[i][j] / Z, 1e-12));
+        frames.push({ Y: Y.map((y) => y.slice()), t, ex, kl });
+      }
+      const mom = t < 250 ? 0.5 : 0.8;
+      // compute every gradient from the same snapshot, then update all points
+      const grad = Y.map((yi, i) => {
+        let gx = 0, gy = 0;
+        for (let j = 0; j < n; j++) if (i !== j) { const m = (ex * P[i][j] - num[i][j] / Z) * num[i][j]; gx += 4 * m * (yi[0] - Y[j][0]); gy += 4 * m * (yi[1] - Y[j][1]); }
+        return [gx, gy];
+      });
+      for (let i = 0; i < n; i++) for (let d = 0; d < 2; d++) {
+        const g = grad[i][d];
+        G[i][d] = Math.sign(g) !== Math.sign(V[i][d]) ? G[i][d] + 0.2 : Math.max(0.01, G[i][d] * 0.8);
+        V[i][d] = mom * V[i][d] - lr * G[i][d] * g;
+        Y[i][d] += V[i][d];
+      }
+      const my = [MLU.mean(Y.map((y) => y[0])), MLU.mean(Y.map((y) => y[1]))];
+      Y = Y.map((y) => [y[0] - my[0], y[1] - my[1]]);
+    }
+    return { frames, P, sig };
   }
 
   function mount(root) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="stage">
-          <div class="stage-toolbar">
-            <div class="legend"><span class="stage-hint">iteration <b id="tsne-iter">0</b> · KL divergence <b id="tsne-kl">–</b></span></div>
-            <div class="btn-row">
-              <button id="tsne-step" class="primary">+ 20 iterations</button>
-              <button id="tsne-reset">reset embedding</button>
-              <button id="tsne-regen">new dataset</button>
-            </div>
-          </div>
-          <svg id="tsne-svg" viewBox="0 0 ${W} ${H}" style="flex:1;width:100%"></svg>
-          <div class="stage-hint">source data is 4 gaussian clusters in 5D - colors show the true (hidden-from-the-algorithm) cluster</div>
-        </div>
-        <div class="controls">
-          <div class="control-card">
-            <h3>perplexity <span class="val" id="tsne-perp-val">20</span></h3>
-            <input type="range" id="tsne-perp" min="5" max="45" step="1" value="20" />
-          </div>
-          <div class="control-card">
-            <h3>fit</h3>
-            <div class="readout" id="tsne-readout">–</div>
-            <div class="note">Full (non-Barnes-Hut) t-SNE: high-D affinities P come from a per-point Gaussian kernel calibrated to the target perplexity via binary search; low-D affinities Q use a Student-t kernel; gradient descent with momentum minimizes KL(P‖Q).</div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const svg = d3.select("#tsne-svg");
-    let { X, labels } = makeClusterData();
-    let P, Y, Ydelta, iter;
-
-    function initEmbedding() {
-      P = computeP(pairwiseSq(X), perplexity());
-      Y = X.map(() => [MLU.randn() * 1, MLU.randn() * 1]);
-      Ydelta = Y.map(() => [0, 0]);
-      iter = 0;
-    }
-    function perplexity() { return +document.getElementById("tsne-perp").value; }
-    initEmbedding();
-
-    function tsneStep() {
-      const n = Y.length;
-      const Dq = MLU.zeros(n, n), numer = MLU.zeros(n, n);
-      let Z = 0;
-      for (let i = 0; i < n; i++)
-        for (let j = i + 1; j < n; j++) {
-          const d2 = (Y[i][0] - Y[j][0]) ** 2 + (Y[i][1] - Y[j][1]) ** 2;
-          const num = 1 / (1 + d2);
-          numer[i][j] = numer[j][i] = num;
-          Z += 2 * num;
-        }
-      const Q = MLU.zeros(n, n);
-      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j) Q[i][j] = Math.max(numer[i][j] / Z, 1e-12);
-
-      const momentum = iter < 20 ? 0.5 : 0.8;
-      const lr = 100;
-      let kl = 0;
-      for (let i = 0; i < n; i++) {
-        const grad = [0, 0];
-        for (let j = 0; j < n; j++) {
-          if (i === j) continue;
-          const mult = (P[i][j] - Q[i][j]) * numer[i][j];
-          grad[0] += mult * (Y[i][0] - Y[j][0]);
-          grad[1] += mult * (Y[i][1] - Y[j][1]);
-          kl += P[i][j] * Math.log(P[i][j] / Q[i][j]);
-        }
-        Ydelta[i][0] = momentum * Ydelta[i][0] - lr * 4 * grad[0];
-        Ydelta[i][1] = momentum * Ydelta[i][1] - lr * 4 * grad[1];
-      }
-      for (let i = 0; i < n; i++) { Y[i][0] += Ydelta[i][0] / n; Y[i][1] += Ydelta[i][1] / n; }
-      iter++;
-      return kl / 2;
-    }
-
-    const ptsG = svg.append("g");
-    function render(kl) {
-      document.getElementById("tsne-iter").textContent = iter;
-      document.getElementById("tsne-perp-val").textContent = perplexity();
-      if (kl !== undefined) document.getElementById("tsne-kl").textContent = kl.toFixed(3);
-
-      const ys = Y.map((p) => p[0]), xs = Y.map((p) => p[1]);
-      const ext = Math.max(1, ...Y.flat().map(Math.abs)) * 1.15;
-      const x = d3.scaleLinear().domain([-ext, ext]).range([PAD, W - PAD]);
-      const y = d3.scaleLinear().domain([-ext, ext]).range([H - PAD, PAD]);
-      svg.selectAll("g.axes").remove();
-      const axesG = svg.insert("g", ":first-child").attr("class", "axes");
-      axesG.append("rect").attr("x", PAD).attr("y", PAD).attr("width", W - 2 * PAD).attr("height", H - 2 * PAD).attr("fill", "none").attr("stroke", "var(--border-soft)");
-
-      const data = Y.map((p, i) => ({ x: p[0], y: p[1], label: labels[i] }));
-      const sel = ptsG.selectAll("circle").data(data);
-      sel.enter().append("circle").attr("r", 5).attr("stroke", "var(--bg)").attr("stroke-width", 1)
-        .merge(sel).attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y)).attr("fill", (d) => MLU.palette[d.label]);
-      sel.exit().remove();
-
-      document.getElementById("tsne-readout").innerHTML = `points: <b>${data.length}</b> (5D → 2D)<br>iterations: <b>${iter}</b>`;
-    }
-
-    document.getElementById("tsne-step").addEventListener("click", () => {
-      let kl = 0; for (let i = 0; i < 20; i++) kl = tsneStep();
-      render(kl);
+    const lab = Lab.studio(root, {
+      id: "tsne", fps: 8, plane: { ticks: false },
+      legend: ui.legend([["var(--text-faint)", "colour = true group (never shown to t-SNE)"]]),
+      tools: ui.btn("rerun", "rerun (new init)", true),
+      hint: "the axes of a t-SNE map have no meaning; only neighbourhoods do",
+      side: [
+        { title: "input data", html: ui.select("ds", "high-dimensional dataset", [["clusters6", "6 clusters in 10-D"], ["clusters3", "3 clusters, unequal spread, 8-D"], ["swiss", "swiss roll (3-D manifold)"], ["shells", "two nested spheres (3-D)"]], "clusters6") + ui.range("n", "points", 40, 200, 10, 120) },
+        { title: "t-SNE", html: ui.range("perp", "perplexity", 2, 50, 1, 20) + ui.range("lr", "learning rate", 10, 500, 10, 150) + ui.range("it", "iterations", 100, 1000, 50, 500) + ui.check("exag", "early exaggeration (×12, first 100 its)", true) },
+      ],
+      arch: {
+        w: 380, h: 190,
+        nodes: [
+          { id: "X", label: "X", sub: "n × D", x: 34, y: 40, w: 56, kind: "data" },
+          { id: "sig", label: "σᵢ search", sub: "match perplexity", x: 140, y: 40, kind: "param" },
+          { id: "P", label: "P (Gaussian)", sub: "high-D affinities", x: 262, y: 40, kind: "op" },
+          { id: "Y", label: "Y ~ N(0, 10⁻⁴)", sub: "2-D init", x: 70, y: 112, kind: "param" },
+          { id: "Q", label: "Q (Student-t)", sub: "low-D affinities", x: 200, y: 112, kind: "op" },
+          { id: "kl", label: "KL(P‖Q)", sub: "gradient", x: 318, y: 112, kind: "loss" },
+          { id: "upd", label: "Y ← Y − η∇", sub: "momentum + gains", x: 200, y: 168, kind: "op" },
+        ],
+        edges: [{ from: "X", to: "sig" }, { from: "sig", to: "P" }, { from: "P", to: "kl" }, { from: "Y", to: "Q" }, { from: "Q", to: "kl" }, { from: "kl", to: "upd" }, { from: "upd", to: "Q", dash: true, label: "iterate" }],
+      },
+      phases: { exag: { label: "early exaggeration", color: 3 }, opt: { label: "optimise", color: 0 }, done: { label: "done", color: 2 } },
+      panels: [{ id: "P", title: "input affinities P", sub: "rows sorted by group" }, { id: "pca", title: "for comparison: PCA of the same data", sub: "linear projection" }],
+      charts: [{ id: "kl", title: "KL divergence", series: [{ key: "kl", label: "KL(P‖Q)", color: "var(--series-1)" }] }],
+      onFrame: render,
     });
-    document.getElementById("tsne-reset").addEventListener("click", () => { initEmbedding(); render(); });
-    document.getElementById("tsne-regen").addEventListener("click", () => { ({ X, labels } = makeClusterData()); initEmbedding(); render(); });
-    document.getElementById("tsne-perp").addEventListener("change", () => { initEmbedding(); render(); });
-
-    render();
-    return () => {};
+    const pl = lab.plane, L = pl.layers;
+    let data = null, R = null, seed = 3;
+    function regenerate() { MLU.seedRng(41); data = makeData(lab.val("ds"), lab.val("n")); rerun(); }
+    function rerun() {
+      MLU.seedRng(seed);
+      R = run(data.X, { perp: Math.min(lab.val("perp"), (data.X.length - 1) / 3), lr: lab.val("lr"), iters: lab.val("it"), exag: lab.val("exag") });
+      const frames = R.frames.map((fr, k) => ({
+        phase: fr.t === lab.val("it") ? "done" : fr.ex > 1 ? "exag" : "opt", major: k === 0 || (fr.ex === 1 && R.frames[k - 1] && R.frames[k - 1].ex > 1),
+        arch: fr.t === 0 ? ["X", "sig", "P", "Y"] : ["Q", "kl", "upd"],
+        title: fr.t === 0 ? `Iteration 0: points start in a tiny random cloud` : fr.ex > 1 ? `Iteration ${fr.t}: early exaggeration` : fr.t === lab.val("it") ? `Done after ${fr.t} iterations` : `Iteration ${fr.t}: refining the map`,
+        text: fr.t === 0 ? `Each point's Gaussian width σᵢ was tuned so its neighbourhood has perplexity ≈ ${lab.val("perp")} (median σ = ${d3.median(R.sig).toFixed(2)}). P holds those high-dimensional similarities.` : fr.ex > 1 ? "P is temporarily multiplied by 12, so true neighbours attract very strongly. Clusters form early and get room to move past each other before fine structure is fixed." : `Attraction (P) pulls neighbours together; the heavy-tailed Student-t in Q lets dissimilar points sit far apart without much penalty, which avoids the crowding problem. KL = <b>${fr.kl.toFixed(3)}</b>.`,
+        tex: fr.t === 0 ? "p_{j|i}=\\frac{e^{-\\lVert x_i-x_j\\rVert^2/2\\sigma_i^2}}{\\sum_{k\\ne i}e^{-\\lVert x_i-x_k\\rVert^2/2\\sigma_i^2}},\\quad p_{ij}=\\frac{p_{j|i}+p_{i|j}}{2n}" : "\\frac{\\partial C}{\\partial y_i}=4\\sum_j (p_{ij}-q_{ij})\\,\\frac{y_i-y_j}{1+\\lVert y_i-y_j\\rVert^2},\\quad q_{ij}=\\frac{(1+\\lVert y_i-y_j\\rVert^2)^{-1}}{\\sum_{k\\ne l}(1+\\lVert y_k-y_l\\rVert^2)^{-1}}",
+        st: fr, m: { kl: fr.kl },
+      }));
+      drawP(); drawPCA();
+      lab.load(frames, { play: true });
+    }
+    function drawP() {
+      const el = lab.R("panel-P"); el.innerHTML = "";
+      const n = data.X.length, order = [...Array(n).keys()].sort((a, b) => data.lab[a] - data.lab[b]);
+      const cv = document.createElement("canvas"); cv.width = n; cv.height = n; cv.style.width = "100%"; cv.style.maxWidth = "260px"; cv.style.imageRendering = "pixelated"; cv.style.borderRadius = "4px";
+      const ctx = cv.getContext("2d"), img = ctx.createImageData(n, n);
+      let mx = 0; for (const r of R.P) for (const v of r) mx = Math.max(mx, v);
+      const c = Lab.palRGB()[0];
+      const bg = Lab.rgb(getComputedStyle(document.documentElement).getPropertyValue("--bg-inset").trim() || "#202020");
+      order.forEach((i, a) => order.forEach((j, b) => { const t = Math.sqrt(R.P[i][j] / mx); const k = (a * n + b) * 4; for (let q = 0; q < 3; q++) img.data[k + q] = bg[q] + (c[q] - bg[q]) * t; img.data[k + 3] = 255; }));
+      ctx.putImageData(img, 0, 0);
+      el.appendChild(cv);
+      const note = document.createElement("div"); note.className = "lab-card-note"; note.textContent = "Bright blocks on the diagonal = groups of mutual neighbours in the original space. t-SNE tries to reproduce this matrix in 2-D.";
+      el.appendChild(note);
+    }
+    function drawPCA() {
+      const el = lab.R("panel-pca"); el.innerHTML = "";
+      const X = data.X, mu = MLU.meanVec(X), Z = X.map((x) => x.map((v, i) => v - mu[i]));
+      const C = MLU.covMatrix(Z, new Array(Z[0].length).fill(0));
+      const E = MLU.jacobiEigen(C);
+      const pr = Z.map((z) => [E.vectors[0], E.vectors[1]].map((v) => v.reduce((s, w, i) => s + w * z[i], 0)));
+      const ex = d3.extent(pr, (p) => p[0]), ey = d3.extent(pr, (p) => p[1]);
+      const P = Lab.xy(el, { w: 300, h: 180, xd: ex, yd: ey, xTicks: 0, yTicks: 0, m: { l: 8, r: 8, t: 8, b: 8 } });
+      P.g.selectAll("circle").data(pr).enter().append("circle").attr("cx", (p) => P.x(p[0])).attr("cy", (p) => P.y(p[1])).attr("r", 2.6).attr("fill", (p, i) => col(data.lab[i])).attr("opacity", 0.85);
+    }
+    const ptG = L.pts.append("g");
+    function render(f) {
+      const Y = f.st.Y;
+      const ext = Math.max(1e-3, ...Y.map((y) => Math.max(Math.abs(y[0]), Math.abs(y[1])))) * 1.1;
+      const sx = (v) => (v / ext) * 9.5;
+      const c = ptG.selectAll("circle").data(Y);
+      c.exit().remove();
+      c.enter().append("circle").attr("r", 4.2).attr("stroke", "var(--bg)").attr("stroke-width", 1).merge(c)
+        .transition().duration(110).ease(d3.easeLinear)
+        .attr("cx", (y) => pl.x(sx(y[0]))).attr("cy", (y) => pl.y(sx(y[1]))).attr("fill", (y, i) => col(data.lab[i]));
+      lab.readout(`<div class="kv"><span>points × dims</span><b>${data.X.length} × ${data.D}</b><span>iteration</span><b>${f.st.t}</b><span>KL(P‖Q)</span><b>${fmt(f.st.kl)}</b><span>perplexity</span><b>${lab.val("perp")}</b></div>`);
+    }
+    lab.watch(["ds", "n"], () => regenerate());
+    lab.watch(["perp", "lr", "it", "exag"], () => rerun());
+    lab.q('[data-b="rerun"]').onclick = () => { seed = (seed * 31 + 7) % 9973; rerun(); };
+    regenerate();
+    return lab.destroy;
   }
 
   MLApp.register({
     id: "tsne",
     name: "t-SNE",
     category: "Unsupervised - Dimensionality Reduction",
-    tagline: "high-D neighborhoods → 2D map",
-    description: "Embeds 5-dimensional clustered data into 2D by matching high-dimensional neighbor probabilities to a low-dimensional Student-t distribution via gradient descent. Step through iterations to watch clusters separate.",
+    tagline: "perplexity, P vs Q, animated embedding",
+    description: "Embed high-dimensional data in 2-D by matching neighbour probabilities. Watch points spread from a tiny random cloud through early exaggeration into clusters, compare with PCA of the same data, and see the input affinity matrix t-SNE is trying to reproduce.",
     info: {
       type: "Unsupervised - Non-linear dimensionality reduction, visualization-focused (no out-of-sample mapping).",
       scenario: "Visualizing high-dimensional data (embeddings, gene expression, learned features) in 2D/3D so that clusters close in high-D stay close in the 2D map.",

@@ -8,7 +8,10 @@ const MLApp = (() => {
     "Supervised - Trees & Ensembles",
     "Unsupervised - Clustering",
     "Unsupervised - Dimensionality Reduction",
+    "Unsupervised - Anomaly & Association",
+    "Probabilistic & Sequential",
     "Deep Learning",
+    "Optimization",
     "Reinforcement Learning",
     "Supplementary",
   ];
@@ -36,6 +39,18 @@ const MLApp = (() => {
     "Deep Learning": {
       color: "var(--series-6)",
       icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="7" r="1.5"/><circle cx="4" cy="17" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="20" r="1.5"/><circle cx="20" cy="9" r="1.5"/><circle cx="20" cy="16" r="1.5"/><line x1="4" y1="7" x2="12" y2="4"/><line x1="4" y1="7" x2="12" y2="12"/><line x1="4" y1="17" x2="12" y2="12"/><line x1="4" y1="17" x2="12" y2="20"/><line x1="12" y1="4" x2="20" y2="9"/><line x1="12" y1="12" x2="20" y2="9"/><line x1="12" y1="12" x2="20" y2="16"/><line x1="12" y1="20" x2="20" y2="16"/></svg>`,
+    },
+    "Unsupervised - Anomaly & Association": {
+      color: "var(--series-2)",
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="16" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="13" r="1.3" fill="currentColor" stroke="none"/><circle cx="7" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="11" cy="17" r="1.3" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2.2"/><path d="M17 3.5 L21 7.5"/></svg>`,
+    },
+    "Probabilistic & Sequential": {
+      color: "var(--series-4)",
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="8" r="2.4"/><circle cx="12" cy="8" r="2.4"/><circle cx="19" cy="8" r="2.4"/><path d="M7.4 8h2.2M14.4 8h2.2"/><path d="M5 10.4v4M12 10.4v4M19 10.4v4"/><rect x="3" y="15" width="4" height="4" rx="1"/><rect x="10" y="15" width="4" height="4" rx="1"/><rect x="17" y="15" width="4" height="4" rx="1"/></svg>`,
+    },
+    "Optimization": {
+      color: "var(--series-1)",
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="13" cy="13" rx="8" ry="5.5"/><ellipse cx="13" cy="13" rx="4.5" ry="2.8"/><circle cx="13" cy="13" r="0.9" fill="currentColor" stroke="none"/><path d="M3 4 L6 8 L8 7 L10 11 L12.5 12.5"/></svg>`,
     },
     "Supplementary": {
       color: "var(--series-3)",
@@ -110,7 +125,7 @@ const MLApp = (() => {
         const item = document.createElement("div");
         item.className = "nav-item" + (algo.id === active ? " active" : "");
         item.tabIndex = 0;
-        item.innerHTML = `<span class="name">${algo.name}</span><span class="tag">${algo.tagline}</span>`;
+        item.innerHTML = `<span class="name">${algo.name}${algo.isNew ? `<span class="new-dot" title="new"></span>` : ""}</span><span class="tag">${algo.tagline}</span>`;
         const go = () => { location.hash = "#/" + algo.id; };
         item.onclick = go;
         item.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
@@ -121,27 +136,175 @@ const MLApp = (() => {
     }
   }
 
+  // ---- home: the launcher -------------------------------------------------
+  const PATHS = [
+    { name: "First steps", note: "The core supervised toolkit, from a straight line to a tree.", ids: ["linear-regression", "logistic-regression", "knn", "naive-bayes", "decision-tree"] },
+    { name: "Ensembles", note: "How weak learners combine into the models that win on tables.", ids: ["decision-tree", "adaboost", "gbm", "xgboost", "lightgbm"] },
+    { name: "Deep learning", note: "From one neuron to attention and generative models.", ids: ["perceptron", "neural-net", "cnn", "rnn-lstm", "autoencoder", "attention", "gan"] },
+    { name: "Finding structure", note: "Clustering and projection with no labels at all.", ids: ["kmeans", "gmm", "dbscan", "hierarchical", "spectral", "pca", "tsne"] },
+    { name: "Thinking in probabilities", note: "Models that output beliefs, not just answers.", ids: ["naive-bayes", "gmm", "gaussian-process", "hmm", "bandits"] },
+    { name: "Optimisation & control", note: "How models learn, and how agents act.", ids: ["optimizers", "q-learning", "bandits"] },
+  ];
+
+  // Distinct accent per path card; CSS nth-child provides the same fallback.
+  const PATH_COLORS = [
+    "var(--series-1)", "var(--series-4)", "var(--series-6)",
+    "var(--series-3)", "var(--series-2)", "var(--series-5)",
+  ];
+  function recentList() {
+    try { return JSON.parse(localStorage.getItem("ml-recent") || "[]").filter((id) => byId(id)); } catch (e) { return []; }
+  }
+  function pushRecent(id) {
+    try {
+      const r = [id, ...recentList().filter((x) => x !== id)].slice(0, 8);
+      localStorage.setItem("ml-recent", JSON.stringify(r));
+    } catch (e) {}
+  }
+
+  function navOrder() {
+    const out = [];
+    for (const cat of order) for (const a of registry) if (a.category === cat && a.kind !== "guide") out.push(a);
+    return out;
+  }
+
+  const dots = (n, max = 3) => n == null ? `<span class="dots"><span class="off">–</span></span>` :
+    `<span class="dots" title="${n} of ${max}">${"●".repeat(n)}<span class="off">${"●".repeat(max - n)}</span></span>`;
+  const yes = (v) => v == null ? "–" : v ? "yes" : "no";
+
+  function atlasRows(filter) {
+    const X = window.MLExtras || {};
+    return navOrder().filter((a) => {
+      const t = (X[a.id] && X[a.id].traits) || {};
+      return filter === "all" || t.learn === filter;
+    }).map((a) => {
+      const t = (X[a.id] && X[a.id].traits) || {};
+      return { a, t };
+    });
+  }
+
+  function renderAtlas(el, state) {
+    const rows = atlasRows(state.filter);
+    const cols = [
+      ["name", "algorithm"], ["task", "task"], ["learn", "learning"], ["interp", "interpretable"], ["scale", "scales to big data"],
+      ["nonlin", "non-linear"], ["scaling", "needs scaling"], ["proba", "probabilistic"],
+    ];
+    const val = (r, k) => k === "name" ? r.a.name : r.t[k] == null ? -1 : typeof r.t[k] === "boolean" ? +r.t[k] : r.t[k];
+    if (state.sort) rows.sort((p, q) => {
+      const a = val(p, state.sort), b = val(q, state.sort);
+      return (typeof a === "string" ? a.localeCompare(b) : b - a) * (state.dir || 1);
+    });
+    el.innerHTML = `<table class="cmp"><thead><tr>${cols.map(([k, t]) => `<th data-k="${k}" title="sort by ${t}">${t}${state.sort === k ? (state.dir > 0 ? " ↓" : " ↑") : ""}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((r) => `<tr>
+        <td><a href="#/${r.a.id}">${r.a.name}</a></td>
+        <td>${r.t.task || "–"}</td><td>${r.t.learn || "–"}</td>
+        <td>${dots(r.t.interp)}</td><td>${dots(r.t.scale)}</td>
+        <td>${yes(r.t.nonlin)}</td><td>${yes(r.t.scaling)}</td><td>${yes(r.t.proba)}</td></tr>`).join("")}</tbody></table>`;
+    el.querySelectorAll("th").forEach((th) => th.onclick = () => {
+      const k = th.dataset.k;
+      state.dir = state.sort === k ? -(state.dir || 1) : 1;
+      state.sort = k;
+      renderAtlas(el, state);
+    });
+  }
+
+  // A small looping k-means animation for the launcher hero.
+  function heroAnimation(svgEl) {
+    const W = 520, H = 260, P = 12;
+    const svg = d3.select(svgEl).attr("viewBox", `0 0 ${W} ${H}`).attr("preserveAspectRatio", "xMidYMid slice");
+    const x = d3.scaleLinear().domain([-10, 10]).range([P, W - P]);
+    const y = d3.scaleLinear().domain([-6, 6]).range([H - P, P]);
+    let timer = null, alive = true;
+    const linkG = svg.append("g"), ptG = svg.append("g"), cG = svg.append("g");
+    function cycle() {
+      if (!alive) return;
+      MLU.seedRng(Math.floor(Math.random() * 1e6));
+      const k = 4;
+      const centers = Array.from({ length: k }, (_, i) => [-7 + i * 4.6 + MLU.randn() * 0.8, MLU.randn() * 2.6]);
+      const pts = Array.from({ length: 120 }, (_, i) => { const c = centers[i % k]; return { x: c[0] + MLU.randn() * 1.2, y: c[1] + MLU.randn() * 1.1, c: -1 }; });
+      let cents = Array.from({ length: k }, () => ({ x: MLU.randRange(-9, 9), y: MLU.randRange(-5, 5) }));
+      ptG.selectAll("*").remove(); cG.selectAll("*").remove(); linkG.selectAll("*").remove();
+      ptG.selectAll("circle").data(pts).enter().append("circle").attr("cx", (d) => x(d.x)).attr("cy", (d) => y(d.y)).attr("r", 0)
+        .attr("fill", "var(--text-faint)").transition().delay((d, i) => i * 4).duration(300).attr("r", 3.4);
+      const cs = cG.selectAll("g").data(cents).enter().append("g").attr("transform", (d) => `translate(${x(d.x)},${y(d.y)})`);
+      cs.append("circle").attr("r", 9).attr("fill", "none").attr("stroke-width", 2.4).attr("stroke", (d, i) => `var(--series-${i + 1})`);
+      cs.append("circle").attr("r", 2.6).attr("fill", (d, i) => `var(--series-${i + 1})`);
+      let it = 0;
+      function step() {
+        if (!alive) return;
+        for (const p of pts) { let b = 0, bd = Infinity; cents.forEach((c, i) => { const d = (p.x - c.x) ** 2 + (p.y - c.y) ** 2; if (d < bd) { bd = d; b = i; } }); p.c = b; }
+        const links = linkG.selectAll("line").data(pts);
+        links.enter().append("line").merge(links).attr("x1", (d) => x(d.x)).attr("y1", (d) => y(d.y))
+          .attr("x2", (d) => x(cents[d.c].x)).attr("y2", (d) => y(cents[d.c].y)).attr("stroke", (d) => `var(--series-${d.c + 1})`).attr("stroke-opacity", 0.25).attr("stroke-width", 0.8);
+        ptG.selectAll("circle").transition().duration(400).attr("fill", (d) => `var(--series-${d.c + 1})`);
+        let moved = 0;
+        cents = cents.map((c, i) => {
+          const m = pts.filter((p) => p.c === i); if (!m.length) return c;
+          const n = { x: d3.mean(m, (p) => p.x), y: d3.mean(m, (p) => p.y) }; moved += Math.hypot(n.x - c.x, n.y - c.y); return n;
+        });
+        cG.selectAll("g").data(cents).transition().duration(700).ease(d3.easeCubicInOut).attr("transform", (d) => `translate(${x(d.x)},${y(d.y)})`);
+        linkG.selectAll("line").transition().duration(700).ease(d3.easeCubicInOut).attr("x2", (d) => x(cents[d.c].x)).attr("y2", (d) => y(cents[d.c].y));
+        it++;
+        timer = setTimeout(moved < 0.01 || it > 12 ? cycle : step, moved < 0.01 || it > 12 ? 2600 : 1100);
+      }
+      timer = setTimeout(step, 1100);
+    }
+    cycle();
+    return () => { alive = false; clearTimeout(timer); };
+  }
+
   function renderHome() {
+    if (typeof activeCleanup === "function") { try { activeCleanup(); } catch (e) {} }
+    activeCleanup = null;
     active = null;
+    status({ algo: "home", phase: "", frame: "" });
     const main = document.getElementById("main");
+    const algos = navOrder();
+    const nCats = order.filter((c) => c !== "Supplementary" && registry.some((a) => a.category === c)).length;
+    const recent = recentList();
+    const guides = registry.filter((a) => a.kind === "guide");
     main.innerHTML = `
-      <div class="main-header">
-        <h1>ML Algorithms - Interactive Lab</h1>
-        <p>An interactive reference for classical machine learning. Every algorithm below is implemented from scratch in JavaScript, so you can click, drag and step through it live, and each one carries a full study guide covering the mathematics, assumptions, tuning, pitfalls and interview questions. Pick one from the sidebar, search above, or start with a card below.</p>
+      <div class="home-hero">
+        <div>
+          <div class="guide-kicker">ML Explorer Lab</div>
+          <h1>Watch every classic ML algorithm learn, step by step.</h1>
+          <p>Each lab loads example data, trains the model from scratch in your browser, and records every step as a frame you can play, pause and scrub. The architecture diagram lights up the stage that is running, the narration typesets the equation behind it, and live charts track the loss. A full study sheet sits one tab away.</p>
+          <div class="hero-stats">
+            <div class="hero-stat"><b>${algos.length}</b><span>algorithms</span></div>
+            <div class="hero-stat"><b>${nCats}</b><span>families</span></div>
+            <div class="hero-stat"><b>${guides.length}</b><span>practice guides</span></div>
+            <div class="hero-stat"><b>0</b><span>servers needed</span></div>
+          </div>
+          <div class="btn-row">
+            <button class="primary" id="home-random">open a random lab</button>
+            <button id="home-atlas">algorithm atlas ↓</button>
+            <button id="home-keys">keyboard shortcuts</button>
+          </div>
+        </div>
+        <div class="hero-viz"><svg id="hero-svg" aria-label="animated k-means clustering"></svg><div class="hv-cap">live · Lloyd's algorithm finding 4 clusters</div></div>
       </div>
+      ${recent.length ? `<div class="home-section-title"><span>recently opened</span></div>
+        <div class="recent-row">${recent.map((id) => `<a href="#/${id}">${byId(id).name}</a>`).join("")}</div>` : ""}
+      <div class="home-section-title"><span>learning paths</span><span style="text-transform:none;letter-spacing:0">each path builds on the one before it</span></div>
+      <div class="paths">${PATHS.map((p, pi) => `
+        <div class="path-card" style="--path-accent:${PATH_COLORS[pi % PATH_COLORS.length]}">
+          <div class="path-top"><span class="path-num">${pi + 1}</span><div><h4>${p.name}</h4><p>${p.note}</p></div></div>
+          <div class="path-steps">${p.ids.filter(byId).map((id, i) => `${i ? `<span class="arrow" aria-hidden="true">→</span>` : ""}<a href="#/${id}"><span class="step-n">${i + 1}</span>${byId(id).name.replace(/ \(.*\)/, "")}</a>`).join("")}</div>
+        </div>`).join("")}</div>
+      <div class="home-section-title"><span>all labs by family</span><span style="text-transform:none;letter-spacing:0">click a family to expand its labs</span></div>
       <div class="home-categories">
-        ${order.map((cat) => {
+        ${order.map((cat, ci) => {
           const items = registry.filter((a) => a.category === cat);
           if (!items.length) return "";
           const meta = CATEGORY_META[cat] || { color: "var(--text)", icon: "" };
           return `
-          <div class="category-card" style="--cat-color:${meta.color}">
-            <div class="category-header">
+          <div class="category-card${ci === 0 ? " open" : ""}" style="--cat-color:${meta.color}">
+            <div class="category-header" tabindex="0" role="button" aria-expanded="${ci === 0 ? "true" : "false"}">
               <div class="category-icon">${meta.icon}</div>
               <div>
                 <div class="category-title">${cat}</div>
-                <div class="category-count">${items.length} algorithm${items.length > 1 ? "s" : ""}</div>
+                <div class="category-count">${items.length} ${cat === "Supplementary" ? "guide" : "algorithm"}${items.length > 1 ? "s" : ""}</div>
               </div>
+              <span class="cat-chevron" aria-hidden="true">›</span>
             </div>
             <div class="algo-stack">
               ${items.map((a) => `
@@ -150,19 +313,76 @@ const MLApp = (() => {
                   <div class="algo-info">
                     <div class="algo-name">${a.name}</div>
                     <div class="algo-desc">${a.description}</div>
+                    ${a.isNew ? `<div class="algo-badges"><span class="new-badge">new</span></div>` : ""}
                   </div>
                 </div>`).join("")}
             </div>
           </div>`;
         }).join("")}
       </div>
+      <div class="home-section-title" id="atlas-anchor"><span>algorithm atlas</span>
+        <div class="cmp-filter" id="atlas-filter">${["all", "supervised", "unsupervised", "reinforcement", "optimisation"].map((f, i) => `<button data-f="${f}" class="${i ? "" : "on"}">${f}</button>`).join("")}</div></div>
+      <div class="cmp-wrap" id="atlas"></div>
+      <p class="note">Ratings are rules of thumb for typical implementations, not benchmarks. Click a column to sort.</p>
     `;
     main.querySelectorAll(".algo-row").forEach((el) => {
       const go = () => { location.hash = "#/" + el.dataset.id; };
       el.onclick = go;
       el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
     });
+    main.querySelectorAll(".category-card").forEach((card) => {
+      const head = card.querySelector(".category-header");
+      if (!head) return;
+      const toggle = (e) => {
+        if (e && e.target && e.target.closest && e.target.closest(".algo-row")) return;
+        const open = card.classList.toggle("open");
+        head.setAttribute("aria-expanded", String(open));
+      };
+      head.onclick = toggle;
+      head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(e); } };
+    });
+    const atlasState = { filter: "all", sort: null, dir: 1 };
+    renderAtlas(document.getElementById("atlas"), atlasState);
+    document.getElementById("atlas-filter").onclick = (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      atlasState.filter = b.dataset.f;
+      document.querySelectorAll("#atlas-filter button").forEach((x) => x.classList.toggle("on", x === b));
+      renderAtlas(document.getElementById("atlas"), atlasState);
+    };
+    document.getElementById("home-random").onclick = () => { location.hash = "#/" + algos[Math.floor(Math.random() * algos.length)].id; };
+    document.getElementById("home-atlas").onclick = () => document.getElementById("atlas-anchor").scrollIntoView({ behavior: "smooth" });
+    document.getElementById("home-keys").onclick = showKeys;
+    activeCleanup = heroAnimation(document.getElementById("hero-svg"));
     renderSidebar();
+  }
+
+  // ---- status bar + keyboard help ------------------------------------------
+  function status({ algo, phase, frame } = {}) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.textContent = v; };
+    set("sb-algo", algo);
+    set("sb-phase", phase ? `phase: ${phase}` : "");
+    set("sb-frame", frame ? `step ${frame}` : "");
+  }
+
+  function showKeys() {
+    if (document.querySelector(".kb-overlay")) return;
+    const ov = document.createElement("div");
+    ov.className = "kb-overlay";
+    ov.innerHTML = `<div class="kb-box" role="dialog" aria-label="keyboard shortcuts"><h3>Keyboard shortcuts</h3><table>
+      <tr><td><kbd>space</kbd></td><td>play / pause the training animation</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>step one frame back / forward</td></tr>
+      <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>jump to the first / last frame</td></tr>
+      <tr><td><kbd>/</kbd> or <kbd>Ctrl</kbd> <kbd>K</kbd></td><td>search algorithms and concepts</td></tr>
+      <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>previous / next algorithm</td></tr>
+      <tr><td><kbd>L</kbd> <kbd>R</kbd></td><td>switch to the Lab / Reference tab</td></tr>
+      <tr><td><kbd>?</kbd></td><td>show this panel</td></tr></table>
+      <div class="btn-row" style="margin-top:14px;justify-content:flex-end"><button class="primary" id="kb-close">close</button></div></div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.onclick = (e) => { if (e.target === ov) close(); };
+    ov.querySelector("#kb-close").onclick = close;
+    ov.querySelector("#kb-close").focus();
+    ov.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
   }
 
   const PRINT_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>`;
@@ -170,6 +390,7 @@ const MLApp = (() => {
   // Supplementary pages have no interactive demo, so they skip the tab bar and
   // render their prose straight into the reference container.
   function renderGuide(algo) {
+    currentShowTab = null;
     const main = document.getElementById("main");
     main.innerHTML = `
       <div class="main-header">
@@ -201,52 +422,78 @@ const MLApp = (() => {
     }
   }
 
+  function neighbours(id) {
+    const list = navOrder();
+    const i = list.findIndex((a) => a.id === id);
+    if (i < 0) return {};
+    return { prev: list[(i - 1 + list.length) % list.length], next: list[(i + 1) % list.length] };
+  }
+
   function renderAlgo(id) {
     const algo = byId(id);
     if (!algo) { renderHome(); return; }
     if (typeof activeCleanup === "function") { try { activeCleanup(); } catch (e) {} }
     activeCleanup = null;
     active = id;
+    pushRecent(id);
+    status({ algo: algo.name, phase: "", frame: "" });
     if (algo.kind === "guide") { renderGuide(algo); return; }
+    const { prev, next } = neighbours(id);
+    const meta = CATEGORY_META[algo.category] || { color: "var(--text)" };
     const main = document.getElementById("main");
     main.innerHTML = `
-      <div class="main-header">
+      <div class="main-header" style="--cat-color:${meta.color}">
+        <div class="algo-crumbs"><span class="crumb-cat">${algo.category}</span>${algo.isNew ? `<span class="new-badge">new</span>` : ""}</div>
         <h1>${algo.name}</h1>
         <p>${algo.description}</p>
       </div>
       <div class="tabs">
-        <div class="tab active" data-tab="play">Playground</div>
-        <div class="tab" data-tab="ref">Reference</div>
-        <button class="print-btn" id="print-btn" title="Print the reference sheet (A4)">${PRINT_ICON} print</button>
+        <div class="tab active" data-tab="play" role="tab" tabindex="0">Lab</div>
+        <div class="tab" data-tab="ref" role="tab" tabindex="0">Reference</div>
+        <div class="tabs-right">
+          ${prev ? `<a class="nav-arrow" href="#/${prev.id}" title="previous: ${prev.name} ([)">‹ ${prev.name}</a>` : ""}
+          ${next ? `<a class="nav-arrow" href="#/${next.id}" title="next: ${next.name} (])">${next.name} ›</a>` : ""}
+          <button class="print-btn" id="print-btn" title="Print the reference sheet (A4)">${PRINT_ICON} print</button>
+        </div>
       </div>
       <div id="tab-play"></div>
       <div id="tab-ref" style="display:none"></div>
     `;
     renderSidebar();
     const playRoot = document.getElementById("tab-play");
-    const cleanup = algo.mount(playRoot, MLU);
-    if (typeof cleanup === "function") activeCleanup = cleanup;
-    if (algo.info) renderInfo(document.getElementById("tab-ref"), algo.info);
+    try {
+      const cleanup = algo.mount(playRoot, MLU);
+      if (typeof cleanup === "function") activeCleanup = cleanup;
+    } catch (e) {
+      console.error(e);
+      playRoot.innerHTML = `<div class="callout accent-red"><div class="callout-title">This lab failed to start</div><div class="callout-text">${String(e && e.message || e)}</div></div>`;
+    }
+    let refRendered = false;
+    const renderRef = () => {
+      if (refRendered || !algo.info) return;
+      refRendered = true;
+      renderInfo(document.getElementById("tab-ref"), algo.info, algo);
+    };
 
     function showTab(which) {
+      if (which === "ref") renderRef();
       main.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === which));
       document.getElementById("tab-play").style.display = which === "play" ? "" : "none";
       document.getElementById("tab-ref").style.display = which === "ref" ? "" : "none";
     }
+    currentShowTab = showTab;
 
     main.querySelectorAll(".tab").forEach((tab) => {
       tab.onclick = () => showTab(tab.dataset.tab);
+      tab.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showTab(tab.dataset.tab); } };
     });
 
-    // The print stylesheet always lays out the reference sheet, so switch to it
-    // first: printing what you cannot see is disorienting.
     const printBtn = document.getElementById("print-btn");
     if (printBtn) printBtn.onclick = () => { showTab("ref"); window.print(); };
 
-    // Arriving from a content search result: open the reference tab and jump to
-    // the matching section.
     if (pendingFocus) { showTab("ref"); applyPendingFocus(); }
   }
+  let currentShowTab = null;
 
   // ---- reference-tab rendering helpers -------------------------------------
   const list = (arr) => `<ul class="info-list">${arr.map((x) => `<li>${x}</li>`).join("")}</ul>`;
@@ -379,8 +626,10 @@ const MLApp = (() => {
     ).join("");
   }
 
-  function renderInfo(container, info) {
+  function renderInfo(container, info, algo) {
     const i = info;
+    const X = (algo && window.MLExtras && MLExtras[algo.id]) || {};
+    const tex = (src, d = true) => (typeof Lab !== "undefined" ? Lab.texHTML(src, d) : src);
     const num = (() => { let n = 0; return () => ++n; })();
 
     // 1 - Core concept: definition, intuition steps, real-world uses.
@@ -415,8 +664,25 @@ const MLApp = (() => {
       i.optimization ? steps(i.optimization) : "",
     ].join("");
 
+    const eqBody = X.tex ? `<div class="eq-grid">${X.tex.map((e) => `
+        <div class="eq-card"><div class="eq-name">${e.name}</div><div class="eq-body">${tex(e.tex)}</div>${e.note ? `<div class="eq-note">${e.note}</div>` : ""}</div>`).join("")}</div>` : "";
+    const cx = X.complexity;
+    const cxv = (v) => (/[\\^_]/.test(v) ? tex(v, false) : v);
+    const cxBody = cx ? `<div class="cx-grid">
+        ${cx.train ? `<div class="cx-card"><div class="cx-k">training time</div><div class="cx-v">${cxv(cx.train)}</div></div>` : ""}
+        ${cx.predict ? `<div class="cx-card"><div class="cx-k">prediction time</div><div class="cx-v">${cxv(cx.predict)}</div></div>` : ""}
+        ${cx.memory ? `<div class="cx-card"><div class="cx-k">memory</div><div class="cx-v">${cxv(cx.memory)}</div></div>` : ""}
+      </div>${cx.note ? `<p class="guide-p">${cx.note}</p>` : ""}` : "";
+    const histBody = X.history ? `<div class="timeline">${X.history.map((h) => `<div class="tl-item"><span class="tl-year">${h.year}</span>${h.text}</div>`).join("")}</div>` : "";
+    const libBody = X.libraries ? table(["Library", "Entry point", "Notes"], X.libraries.map((l) => [l[0], `<span class="inline-formula">${l[1]}</span>`, l[2] || ""])) : "";
+    const relBody = X.related ? `<div class="related-row">${X.related.filter((r) => byId(r.id || r)).map((r) => {
+        const id = r.id || r; const a = byId(id);
+        return `<a href="#/${id}" title="${(r.why || a.tagline).replace(/"/g, "&quot;")}">${a.name}${r.why ? ` <span style="color:var(--text-faint)">· ${r.why}</span>` : ""}</a>`;
+      }).join("")}</div>` : "";
+
     container.innerHTML = [
       section(num(), "Core concept", overview, "concept"),
+      eqBody ? section(num(), "Key equations, typeset", eqBody, "equations") : "",
       section(num(), "Mathematics &amp; mechanism", mathBody, "math"),
       section(num(), "Loss function &amp; optimization", lossBody, "loss"),
       i.assumptions ? section(num(), "Key assumptions",
@@ -453,6 +719,10 @@ const MLApp = (() => {
         codeBlock(i.code),
       ].join(""), "quickref") : "",
       i.whyChain ? section(num(), "Why-chain - interview drill", whyChain(i.whyChain), "whychain") : "",
+      cxBody ? section(num(), "Complexity &amp; scaling", cxBody, "complexity") : "",
+      histBody ? section(num(), "History &amp; key papers", histBody, "history") : "",
+      libBody ? section(num(), "In the libraries", libBody, "libraries") : "",
+      relBody ? section(num(), "Related algorithms", relBody, "related") : "",
     ].join("");
 
     if (i.decisionFunction.plot) MLU.plotFn(container.querySelector("#plot-decision"), i.decisionFunction.plot);
@@ -471,12 +741,18 @@ const MLApp = (() => {
     const main = document.getElementById("main");
     if (main) main.scrollTop = 0;
     window.scrollTo(0, 0);
+    refreshOverlayScrollbars();
   }
 
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  let sessionTheme = null;
   function currentTheme() {
-    const stored = localStorage.getItem("ml-theme");
+    const stored = sessionTheme || store.get("ml-theme");
     if (stored) return stored;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
 
   function updateThemeToggleUI(theme) {
@@ -489,17 +765,45 @@ const MLApp = (() => {
   }
 
   function applyTheme(theme) {
+    sessionTheme = theme;
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("ml-theme", theme);
+    store.set("ml-theme", theme);
     updateThemeToggleUI(theme);
+    window.dispatchEvent(new Event("ml-theme"));
   }
 
   function initTheme() {
     updateThemeToggleUI(currentTheme());
-    const stored = localStorage.getItem("ml-theme");
+    const stored = store.get("ml-theme");
     if (stored) document.documentElement.setAttribute("data-theme", stored);
     const btn = document.getElementById("theme-toggle");
     if (btn) btn.addEventListener("click", () => applyTheme(currentTheme() === "dark" ? "light" : "dark"));
+    if (window.matchMedia) {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const onChange = () => { if (!sessionTheme && !store.get("ml-theme")) { updateThemeToggleUI(currentTheme()); window.dispatchEvent(new Event("ml-theme")); } };
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+    }
+  }
+
+  function initShortcuts() {
+    document.addEventListener("keydown", (e) => {
+      const tag = (e.target.tagName || "").toLowerCase();
+      const typing = tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        const inp = document.getElementById("search-input"); if (inp) inp.focus();
+        return;
+      }
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "?") { e.preventDefault(); showKeys(); }
+      else if (e.key === "[" || e.key === "]") {
+        if (!active) return;
+        const { prev, next } = neighbours(active);
+        const t = e.key === "[" ? prev : next;
+        if (t) location.hash = "#/" + t.id;
+      } else if ((e.key === "l" || e.key === "L") && currentShowTab) currentShowTab("play");
+      else if ((e.key === "r" || e.key === "R") && currentShowTab) currentShowTab("ref");
+    });
   }
 
   // ---- header search --------------------------------------------------------
@@ -521,6 +825,11 @@ const MLApp = (() => {
     worked:         { label: "Worked example",  slug: "worked" },
     quickref:       { label: "Quick reference", slug: "quickref" },
     whychain:       { label: "Interview Q",     slug: "whychain" },
+    equations:      { label: "Equations",       slug: "equations" },
+    complexity:     { label: "Complexity",      slug: "complexity" },
+    history:        { label: "History",         slug: "history" },
+    libraries:      { label: "Libraries",       slug: "libraries" },
+    related:        { label: "Related",         slug: "related" },
   };
 
   const strip = (s) => String(s).replace(/<[^>]*>/g, "");
@@ -610,6 +919,11 @@ const MLApp = (() => {
     // matches the question text directly.
     (i.whyChain || []).forEach((qa) => { push("whychain", qa.q); push("whychain", `${qa.q} ${qa.a}`); });
 
+    const X = (window.MLExtras && MLExtras[a.id]) || {};
+    pushAll("equations", X.tex, (e) => `${e.name}: ${e.note || ""}`);
+    if (X.complexity) push("complexity", `training ${X.complexity.train || ""} prediction ${X.complexity.predict || ""} memory ${X.complexity.memory || ""} ${X.complexity.note || ""}`);
+    pushAll("history", X.history, (h) => `${h.year} ${h.text}`);
+    pushAll("libraries", X.libraries, (l) => l.join(" "));
     return out;
   }
 
@@ -862,21 +1176,124 @@ const MLApp = (() => {
     });
   }
 
-  function initMobileNav() {
+  function initSidebarNav() {
     const btn = document.getElementById("menu-toggle");
     const sidebar = document.getElementById("sidebar-nav");
-    if (btn && sidebar) btn.addEventListener("click", () => sidebar.classList.toggle("open"));
+    if (!btn || !sidebar) return;
+    const sync = () => {
+      const collapsed = document.body.classList.contains("nav-collapsed");
+      btn.setAttribute("aria-expanded", String(!collapsed));
+      btn.title = collapsed ? "show sidebar" : "hide sidebar";
+    };
+    try {
+      if (localStorage.getItem("ml-nav-collapsed") === "1") document.body.classList.add("nav-collapsed");
+    } catch (e) {}
+    sync();
+    btn.addEventListener("click", () => {
+      if (window.matchMedia && window.matchMedia("(max-width: 780px)").matches) {
+        sidebar.classList.toggle("open");
+      } else {
+        const collapsed = document.body.classList.toggle("nav-collapsed");
+        try { localStorage.setItem("ml-nav-collapsed", collapsed ? "1" : "0"); } catch (e) {}
+        sync();
+        refreshOverlayScrollbars();
+      }
+    });
+  }
+
+  // Custom overlay scrollbars for the two app columns. The native bars are
+  // hidden but scrolling (wheel, touch, keyboard, drag) works exactly as
+  // before; the overlay thumb is deliberately short (28–72px) and only
+  // appears while hovering, dragging, or shortly after scrolling.
+  const csbBars = [];
+  function refreshOverlayScrollbars() {
+    requestAnimationFrame(() => { for (const b of csbBars) { try { b.refresh(); } catch (e) {} } });
+  }
+  function initOverlayScrollbars() {
+    if (!window.matchMedia || !window.matchMedia("(pointer: fine)").matches) return; // touch keeps native bars
+    const layout = document.querySelector(".layout");
+    if (!layout) return;
+    for (const id of ["sidebar-nav", "main"]) {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.csbInit) continue;
+      el.dataset.csbInit = "1";
+      el.classList.add("csb-hide-native");
+      const bar = document.createElement("div");
+      bar.className = "csb";
+      bar.innerHTML = '<div class="csb-thumb"></div>';
+      layout.appendChild(bar);
+      const thumb = bar.firstChild;
+      let dragging = false, hideT = null;
+      const MIN_T = 28, MAX_T = 72;
+      function geometry() {
+        const r = el.getBoundingClientRect(), lr = layout.getBoundingClientRect();
+        bar.style.top = Math.max(0, r.top - lr.top) + "px";
+        bar.style.height = r.height + "px";
+        if (id === "sidebar-nav") { bar.style.left = Math.max(0, r.right - lr.left - 9) + "px"; bar.style.right = "auto"; }
+        else { bar.style.left = "auto"; bar.style.right = "3px"; }
+      }
+      function paint() {
+        const h = el.clientHeight, sh = el.scrollHeight;
+        if (sh <= h + 1) { bar.dataset.empty = "1"; bar.classList.remove("on"); return; }
+        delete bar.dataset.empty;
+        const th = Math.max(MIN_T, Math.min(MAX_T, (h * h) / sh));
+        const track = Math.max(1, h - th - 4);
+        const p = sh - h > 0 ? el.scrollTop / (sh - h) : 0;
+        thumb.style.height = th + "px";
+        thumb.style.transform = `translateY(${(2 + p * track).toFixed(1)}px)`;
+      }
+      function refresh() { geometry(); paint(); }
+      function poke() {
+        if (bar.dataset.empty) return;
+        bar.classList.add("on");
+        clearTimeout(hideT);
+        hideT = setTimeout(() => { if (!dragging && !el.matches(":hover")) bar.classList.remove("on"); }, 900);
+      }
+      el.addEventListener("scroll", () => { paint(); poke(); }, { passive: true });
+      el.addEventListener("pointerenter", () => { paint(); if (!bar.dataset.empty) bar.classList.add("on"); });
+      el.addEventListener("pointerleave", () => { if (!dragging) bar.classList.remove("on"); });
+      thumb.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        bar.classList.add("on");
+        try { thumb.setPointerCapture(e.pointerId); } catch (err) {}
+        const y0 = e.clientY, s0 = el.scrollTop;
+        const h = el.clientHeight, sh = el.scrollHeight;
+        const th = thumb.offsetHeight || 40;
+        const range = Math.max(1, h - th - 4);
+        const move = (ev) => { el.scrollTop = s0 + ((ev.clientY - y0) / range) * (sh - h); };
+        const up = () => {
+          dragging = false;
+          thumb.removeEventListener("pointermove", move);
+          bar.classList.remove("on");
+        };
+        thumb.addEventListener("pointermove", move);
+        thumb.addEventListener("pointerup", up, { once: true });
+        thumb.addEventListener("pointercancel", up, { once: true });
+        e.preventDefault();
+      });
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(refresh);
+        ro.observe(el);
+        ro.observe(layout);
+      }
+      if (window.MutationObserver) new MutationObserver(refresh).observe(el, { childList: true, subtree: true });
+      window.addEventListener("resize", refresh);
+      csbBars.push({ el, refresh });
+      refresh();
+    }
   }
 
   function init() {
     initTheme();
+    initShortcuts();
     initSearch();
-    initMobileNav();
+    initSidebarNav();
+    initOverlayScrollbars();
     window.addEventListener("hashchange", router);
     router();
   }
 
   // `registry` and `renderInfo` are exposed so the reference pages can be
   // rendered headlessly and checked for gaps without a browser.
-  return { register, init, registry, renderInfo, renderGuideBody, searchAll };
+  return { register, init, registry, renderInfo, renderGuideBody, searchAll, status, byId };
 })();

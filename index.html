@@ -3,21 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ML Algorithms - Interactive Lab</title>
+<title>ML Explorer Lab</title>
+<meta name="description" content="Interactive machine-learning lab: every classic algorithm implemented from scratch in the browser, with animated step-by-step training, architecture diagrams and full reference sheets." />
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141414'/%3E%3Ctext x='16' y='23' font-family='monospace' font-size='20' font-weight='700' fill='%23ffffff' text-anchor='middle'%3E%26%23955%3B%3C/text%3E%3C/svg%3E" />
+<!-- KaTeX typesets every equation. If this stylesheet cannot load, the
+     formulas fall back to native MathML automatically (see Lab.texHTML). -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
 <link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="explorer.css" />
 </head>
 <body>
 
 <div class="topbar">
   <div style="display:flex;align-items:center;gap:14px">
-    <button class="menu-toggle" id="menu-toggle" aria-label="Toggle algorithm list">☰ algorithms</button>
-    <a class="brand" href="#/" aria-label="Go to home"><span class="glyph">λ</span> ml-algorithms&nbsp;<span style="color:var(--text-faint);font-weight:400;">/ lab</span></a>
+    <button class="menu-toggle" id="menu-toggle" aria-label="Toggle sidebar" aria-expanded="true">☰</button>
+    <a class="brand" href="#/" aria-label="Go to home"><span class="glyph">λ</span> ml-explorer&nbsp;<span style="color:var(--text-faint);font-weight:400;">/ lab</span></a>
   </div>
   <div class="topbar-right">
     <div class="search" id="search">
       <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input type="text" id="search-input" placeholder="search algorithms" autocomplete="off"
+      <input type="text" id="search-input" placeholder="search algorithms, concepts" autocomplete="off"
              role="combobox" aria-expanded="false" aria-controls="search-results" aria-label="Search algorithms" />
       <kbd class="search-kbd" id="search-kbd">/</kbd>
       <div class="search-results" id="search-results" role="listbox" hidden></div>
@@ -33,37 +38,76 @@
   <div class="sidebar" id="sidebar-nav"></div>
   <div class="main" id="main"></div>
 </div>
+<div class="statusbar" id="statusbar" aria-live="polite">
+  <span class="sb-item"><span class="sb-dot"></span><b id="sb-algo">home</b></span>
+  <span class="sb-item sb-hide-m" id="sb-phase"></span>
+  <span class="sb-item" id="sb-frame"></span>
+  <span class="sb-right">
+    <span class="sb-item sb-hide-m"><kbd>space</kbd> play <kbd>←</kbd><kbd>→</kbd> step <kbd>?</kbd> shortcuts</span>
+    <span class="sb-item sb-hide-m">runs entirely in your browser</span>
+  </span>
+</div>
 
-<!-- CDN libraries: D3 drives every rendering/interaction surface below (scales, drag,
-     contours, transitions); TensorFlow.js powers the trained-in-browser MLP demo. -->
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4/dist/tf.min.js"></script>
+<!-- CDN libraries (pinned): D3 renders every plot and diagram, TensorFlow.js
+     trains the neural labs, KaTeX typesets the maths. -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 
 <script src="js/utils.js"></script>
 <script src="js/app.js"></script>
+<script src="js/lab.js"></script>
+<script src="js/extras.js"></script>
+<script src="js/gbdt.js"></script>
 
+<!-- Supervised: regression -->
 <script src="js/algorithms/linear_regression.js"></script>
+<script src="js/algorithms/lasso.js"></script>
+<script src="js/algorithms/gaussian_process.js"></script>
+<script src="js/algorithms/fm.js"></script>
+<!-- Supervised: classification -->
+<script src="js/algorithms/perceptron.js"></script>
 <script src="js/algorithms/logistic_regression.js"></script>
 <script src="js/algorithms/knn.js"></script>
 <script src="js/algorithms/naive_bayes.js"></script>
-<script src="js/algorithms/kmeans.js"></script>
-<script src="js/algorithms/gmm.js"></script>
-<script src="js/algorithms/pca.js"></script>
-<script src="js/algorithms/tsne.js"></script>
+<script src="js/algorithms/lda.js"></script>
+<script src="js/algorithms/svm.js"></script>
+<!-- Trees & ensembles -->
 <script src="js/algorithms/decision_tree.js"></script>
+<script src="js/algorithms/adaboost.js"></script>
 <script src="js/algorithms/gbm.js"></script>
 <script src="js/algorithms/xgboost.js"></script>
 <script src="js/algorithms/lightgbm.js"></script>
-<script src="js/algorithms/svm.js"></script>
+<!-- Clustering -->
+<script src="js/algorithms/kmeans.js"></script>
+<script src="js/algorithms/gmm.js"></script>
 <script src="js/algorithms/dbscan.js"></script>
+<script src="js/algorithms/hierarchical.js"></script>
+<script src="js/algorithms/mean_shift.js"></script>
+<script src="js/algorithms/spectral.js"></script>
+<!-- Dimensionality reduction -->
+<script src="js/algorithms/pca.js"></script>
+<script src="js/algorithms/tsne.js"></script>
+<!-- Anomaly & association -->
+<script src="js/algorithms/isolation_forest.js"></script>
+<script src="js/algorithms/apriori.js"></script>
+<!-- Probabilistic & sequential -->
+<script src="js/algorithms/hmm.js"></script>
+<!-- Deep learning -->
 <script src="js/algorithms/neuralnet.js"></script>
 <script src="js/algorithms/cnn.js"></script>
 <script src="js/algorithms/rnn_lstm.js"></script>
+<script src="js/algorithms/autoencoder.js"></script>
+<script src="js/algorithms/attention.js"></script>
+<script src="js/algorithms/gan.js"></script>
 <script src="js/algorithms/rbm.js"></script>
-<script src="js/algorithms/fm.js"></script>
+<!-- Optimization -->
+<script src="js/algorithms/optimizers.js"></script>
+<!-- Reinforcement learning -->
 <script src="js/algorithms/qlearning.js"></script>
+<script src="js/algorithms/bandits.js"></script>
 
-<!-- Supplementary guides: reference-only pages, no interactive playground. -->
+<!-- Supplementary guides: reference-only pages, no interactive lab. -->
 <script src="js/guides/eda.js"></script>
 <script src="js/guides/preprocessing.js"></script>
 <script src="js/guides/evaluation.js"></script>
